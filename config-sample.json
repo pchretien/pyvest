@@ -1,0 +1,13 @@
+{
+    "account_id": "YOUR_ACCOUNT_ID",
+    "access_token": "YOUR_ACCESS_TOKEN",
+    "harvest_url": "https://api.harvestapp.com/v2/time_entries",
+    "days_back": 21,
+    "aws": {
+        "access_key_id": "YOUR_AWS_ACCESS_KEY_ID",
+        "secret_access_key": "YOUR_AWS_SECRET_ACCESS_KEY",
+        "region": "us-east-1",
+        "bucket_name": "your-bucket-name"
+    }
+}
+
