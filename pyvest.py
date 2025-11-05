@@ -354,11 +354,13 @@ def merge_entries(existing_entries, new_entries, start_date):
             del existing_entries[entry_id]
     
     # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
+    # Calculer start_date moins 2 jours pour la comparaison
+    start_date_minus_1 = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
     removed_old_ids = []
     for entry_id, entry in list(existing_entries.items()):
         spent_date = entry.get('spent_date', '')
-        # Si la spent_date est vide ou plus ancienne que start_date, supprimer l'entrée
-        if spent_date and spent_date < start_date:
+        # Si la spent_date est vide ou plus ancienne que start_date - 2 jours, supprimer l'entrée
+        if spent_date and spent_date < start_date_minus_1:
             removed_old_ids.append(entry_id)
             del existing_entries[entry_id]
     
@@ -373,7 +375,7 @@ def merge_entries(existing_entries, new_entries, start_date):
         print(f"✓ Aucune entrée supprimée (toutes les entrées manquantes ont une spent_date < {start_date})")
     
     if removed_old_ids:
-        print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date})")
+        print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date_minus_2})")
     
     print(f"✓ Fin du merge - {len(existing_entries)} entrées après fusion")
     return existing_entries
