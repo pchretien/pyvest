@@ -310,6 +310,7 @@ def merge_entries(existing_entries, new_entries, start_date):
     Fusionne les nouvelles entrées avec les existantes.
     Gère les mises à jour et les suppressions.
     Les suppressions ne sont détectées que pour les entrées avec spent_date >= date de début.
+    Supprime également les entrées avec spent_date < start_date pour éviter la croissance indéfinie.
     """
     print(f"✓ Début du merge - {len(existing_entries)} entrées existantes, {len(new_entries)} nouvelles entrées")
     
@@ -339,6 +340,15 @@ def merge_entries(existing_entries, new_entries, start_date):
             deleted_ids.append(entry_id)
             del existing_entries[entry_id]
     
+    # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
+    removed_old_ids = []
+    for entry_id, entry in list(existing_entries.items()):
+        spent_date = entry.get('spent_date', '')
+        # Si la spent_date est vide ou plus ancienne que start_date, supprimer l'entrée
+        if spent_date and spent_date < start_date:
+            removed_old_ids.append(entry_id)
+            del existing_entries[entry_id]
+    
     # Calculer et afficher le nombre d'enregistrements vraiment nouveaux
     new_record_count = len(new_entry_ids - existing_ids_before_merge)
     print(f"✓ {new_record_count} nouveau(x) enregistrement(s) dans les nouvelles entrées")
@@ -348,6 +358,9 @@ def merge_entries(existing_entries, new_entries, start_date):
         print(f"✓ {len(deleted_ids)} entrée(s) supprimée(s) (spent_date >= {start_date})")
     else:
         print(f"✓ Aucune entrée supprimée (toutes les entrées manquantes ont une spent_date < {start_date})")
+    
+    if removed_old_ids:
+        print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date})")
     
     print(f"✓ Fin du merge - {len(existing_entries)} entrées après fusion")
     return existing_entries
@@ -496,8 +509,8 @@ def main():
             'body': json.dumps({'error': 'Configuration AWS requise'})
         }
     
-    # Clé S3 pour le fichier
-    s3_key = json_filename
+    # Clé S3 pour le fichier (dans le sous-dossier daily)
+    s3_key = f"daily/{json_filename}"
     
     # Charger les entrées existantes depuis S3
     period_entries = load_period_entries_from_s3(s3_key, aws_config)
