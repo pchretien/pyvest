@@ -18,6 +18,7 @@ CHANGES_FILE_PATTERNS = {
     'deleted': '-deleted-',
     'updated': '-updated-'
 }
+MAX_CHANGES_ENTRIES_DISPLAYED = 100
 
 def load_config_from_env():
     """
@@ -235,24 +236,45 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
         if existing_updated != new_updated:
             updated_entries_list.append(new_entry)
     
-    # Afficher les trois listes
+    # Fonction pour trier par updated_at (plus récent en premier) et prendre les N premiers
+    def get_newest_entries(entries, limit=MAX_CHANGES_ENTRIES_DISPLAYED):
+        """Trie les entrées par updated_at (décroissant) et retourne les limit premières."""
+        # Trier par updated_at en ordre décroissant (plus récent en premier)
+        # Les entrées sans updated_at sont placées en dernier
+        sorted_entries = sorted(
+            entries,
+            key=lambda x: x.get('updated_at', '') or '',
+            reverse=True
+        )
+        return sorted_entries[:limit]
+    
+    # Afficher les trois listes (seulement les N plus récentes)
     print("\n" + "="*60)
     print("RÉSUMÉ DES CHANGEMENTS")
     print("="*60)
     print(f"Nouvelles entrées: {len(new_entries_list)}")
     if new_entries_list:
-        for entry in new_entries_list:
+        newest_new = get_newest_entries(new_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
+        for entry in newest_new:
             print(format_time_entry(entry))
+        if len(new_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
+            print(f"  ... et {len(new_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
     
     print(f"\nEntrées supprimées: {len(deleted_entries_list)}")
     if deleted_entries_list:
-        for entry in deleted_entries_list:
+        newest_deleted = get_newest_entries(deleted_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
+        for entry in newest_deleted:
             print(format_time_entry(entry))
+        if len(deleted_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
+            print(f"  ... et {len(deleted_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
     
     print(f"\nEntrées mises à jour: {len(updated_entries_list)}")
     if updated_entries_list:
-        for entry in updated_entries_list:
+        newest_updated = get_newest_entries(updated_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
+        for entry in newest_updated:
             print(format_time_entry(entry))
+        if len(updated_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
+            print(f"  ... et {len(updated_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
     print("="*60 + "\n")
     
     # Générer le nom de fichier avec date et heure
@@ -375,7 +397,7 @@ def merge_entries(existing_entries, new_entries, start_date):
         print(f"✓ Aucune entrée supprimée (toutes les entrées manquantes ont une spent_date < {start_date})")
     
     if removed_old_ids:
-        print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date_minus_2})")
+        print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date_minus_1})")
     
     print(f"✓ Fin du merge - {len(existing_entries)} entrées après fusion")
     return existing_entries
