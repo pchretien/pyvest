@@ -6,25 +6,43 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-# Global constants for file paths and naming
+# ============================================================================
+# Constants: S3 paths
+# ============================================================================
 S3_HARVEST_DATA_FILE = "harvest-data.json"
 S3_DAILY_SUBFOLDER = "daily"
 S3_CHANGES_SUBFOLDER = "changes"
+
+# ============================================================================
+# Constants: Local paths
+# ============================================================================
 LOCAL_CHANGES_FOLDER = "changes"
+
+# ============================================================================
+# Constants: Date/Time formats
+# ============================================================================
 DATE_FORMAT_FILENAME = '%Y%m%d'
 DATE_FORMAT_DISPLAY = '%Y-%m-%d'
 TIME_FORMAT_FILENAME = '%H%M%S'
+
+# ============================================================================
+# Constants: File naming patterns
+# ============================================================================
 CHANGES_FILE_PATTERNS = {
     'new': '-new-',
     'deleted': '-deleted-',
     'updated': '-updated-'
 }
 
+# ============================================================================
 # Constants: API settings
+# ============================================================================
 HARVEST_API_MAX_PER_PAGE = 2000
 DEFAULT_DAYS_BACK = 90
 
+# ============================================================================
 # Constants: Display settings
+# ============================================================================
 MAX_CHANGES_ENTRIES_DISPLAYED = 100
 
 def load_config_from_env():
@@ -129,10 +147,17 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
         while True:
             # print(f"Récupération de la page {page}...")
             
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=30)
             response.raise_for_status()
             
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    f"Erreur: La réponse de l'API Harvest n'est pas un JSON valide. "
+                    f"Status code: {response.status_code}, URL: {url}"
+                ) from e
+            
             time_entries = data.get('time_entries', [])
             
             if not time_entries:
@@ -152,8 +177,21 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
         print(f"✓ Total: {len(all_entries)} entrées récupérées sur {page} page(s)")
         return all_entries
     
+    except requests.exceptions.Timeout as e:
+        raise RuntimeError(
+            f"Erreur: Timeout lors de la requête API Harvest (URL: {url}). "
+            f"La requête a pris plus de 30 secondes."
+        ) from e
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response else "unknown"
+        raise RuntimeError(
+            f"Erreur HTTP {status_code} lors de la requête API Harvest (URL: {url}). "
+            f"Vérifiez vos credentials et l'URL de l'API."
+        ) from e
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Erreur lors de la requête API Harvest: {e}") from e
+        raise RuntimeError(
+            f"Erreur lors de la requête API Harvest (URL: {url}): {e}"
+        ) from e
 
 def load_period_entries_from_s3(s3_key, aws_config):
     """
@@ -176,6 +214,20 @@ def load_period_entries_from_s3(s3_key, aws_config):
     entries_dict = {entry['id']: entry for entry in entries}
     print(f"✓ {len(entries_dict)} entrées chargées depuis S3 ({S3_HARVEST_DATA_FILE})")
     return entries_dict
+
+def calculate_cutoff_date(start_date, days_offset=1):
+    """
+    Calcule la date de coupure (start_date - days_offset).
+    
+    Args:
+        start_date: Date de début au format YYYY-MM-DD
+        days_offset: Nombre de jours à soustraire (défaut: 1)
+    
+    Returns:
+        str: Date de coupure au format YYYY-MM-DD
+    """
+    return (datetime.strptime(start_date, DATE_FORMAT_DISPLAY) - 
+            timedelta(days=days_offset)).strftime(DATE_FORMAT_DISPLAY)
 
 def format_time_entry(entry):
     """
@@ -424,8 +476,8 @@ def merge_entries(existing_entries, new_entries, start_date):
             del existing_entries[entry_id]
     
     # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
-    # Calculer start_date moins 2 jours pour la comparaison
-    start_date_minus_1 = (datetime.strptime(start_date, DATE_FORMAT_DISPLAY) - timedelta(days=1)).strftime(DATE_FORMAT_DISPLAY)
+    # Calculer start_date moins 1 jour pour la comparaison
+    start_date_minus_1 = calculate_cutoff_date(start_date, days_offset=1)
     removed_old_ids = []
     for entry_id, entry in list(existing_entries.items()):
         spent_date = entry.get('spent_date', '')
