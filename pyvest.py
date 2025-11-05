@@ -12,12 +12,19 @@ S3_DAILY_SUBFOLDER = "daily"
 S3_CHANGES_SUBFOLDER = "changes"
 LOCAL_CHANGES_FOLDER = "changes"
 DATE_FORMAT_FILENAME = '%Y%m%d'
+DATE_FORMAT_DISPLAY = '%Y-%m-%d'
 TIME_FORMAT_FILENAME = '%H%M%S'
 CHANGES_FILE_PATTERNS = {
     'new': '-new-',
     'deleted': '-deleted-',
     'updated': '-updated-'
 }
+
+# Constants: API settings
+HARVEST_API_MAX_PER_PAGE = 2000
+DEFAULT_DAYS_BACK = 90
+
+# Constants: Display settings
 MAX_CHANGES_ENTRIES_DISPLAYED = 100
 
 def load_config_from_env():
@@ -31,7 +38,7 @@ def load_config_from_env():
             'account_id': os.getenv('HARVEST_ACCOUNT_ID'),
             'access_token': os.getenv('HARVEST_ACCESS_TOKEN'),
             'harvest_url': os.getenv('HARVEST_URL', 'https://api.harvestapp.com/v2/time_entries'),
-            'days_back': int(os.getenv('DAYS_BACK', '90')),
+            'days_back': int(os.getenv('DAYS_BACK', str(DEFAULT_DAYS_BACK))),
             'aws': {
                 'region': os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1')),
                 'bucket_name': os.getenv('S3_BUCKET_NAME')
@@ -60,10 +67,10 @@ def load_config_from_file(config_file='config.json'):
         if 'account_id' not in config or 'access_token' not in config or 'harvest_url' not in config:
             raise ValueError("Le fichier de configuration doit contenir 'account_id', 'access_token' et 'harvest_url'")
         
-        # Vérifier le paramètre days_back (optionnel, défaut 90)
+        # Vérifier le paramètre days_back (optionnel, défaut DEFAULT_DAYS_BACK)
         if 'days_back' not in config:
-            config['days_back'] = 90
-            print("Paramètre 'days_back' non trouvé, utilisation de la valeur par défaut: 90 jours")
+            config['days_back'] = DEFAULT_DAYS_BACK
+            print(f"Paramètre 'days_back' non trouvé, utilisation de la valeur par défaut: {DEFAULT_DAYS_BACK} jours")
         
         # Vérifier la configuration AWS (optionnelle)
         if 'aws' in config:
@@ -75,24 +82,26 @@ def load_config_from_file(config_file='config.json'):
         
         return config
     except FileNotFoundError:
-        print(f"Erreur: Le fichier {config_file} n'existe pas.")
-        print("Créez un fichier config.json avec le format suivant:")
-        print(json.dumps({
-            "account_id": "VOTRE_ACCOUNT_ID",
-            "access_token": "VOTRE_ACCESS_TOKEN",
-            "harvest_url": "https://api.harvestapp.com/v2/time_entries",
-            "days_back": 90,
-            "aws": {
-                "access_key_id": "VOTRE_ACCESS_KEY_ID",
-                "secret_access_key": "VOTRE_SECRET_ACCESS_KEY",
-                "region": "us-east-1",
-                "bucket_name": "votre-bucket-name"
+        sample_config = {
+            'account_id': 'VOTRE_ACCOUNT_ID',
+            'access_token': 'VOTRE_ACCESS_TOKEN',
+            'harvest_url': 'https://api.harvestapp.com/v2/time_entries',
+            'days_back': DEFAULT_DAYS_BACK,
+            'aws': {
+                'access_key_id': 'VOTRE_ACCESS_KEY_ID',
+                'secret_access_key': 'VOTRE_SECRET_ACCESS_KEY',
+                'region': 'us-east-1',
+                'bucket_name': 'votre-bucket-name'
             }
-        }, indent=2))
-        exit(1)
-    except json.JSONDecodeError:
-        print(f"Erreur: Le fichier {config_file} n'est pas un JSON valide.")
-        exit(1)
+        }
+        error_msg = (
+            f"Le fichier {config_file} n'existe pas.\n"
+            "Créez un fichier config.json avec le format suivant:\n"
+            f"{json.dumps(sample_config, indent=2)}"
+        )
+        raise FileNotFoundError(error_msg)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Le fichier {config_file} n'est pas un JSON valide: {e}") from e
 
 def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
     """
@@ -113,7 +122,7 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
         "from": from_date,
         "to": to_date,
         "page": page,
-        "per_page": 2000  # Maximum entries per page
+        "per_page": HARVEST_API_MAX_PER_PAGE
     }
     
     try:
@@ -144,8 +153,7 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
         return all_entries
     
     except requests.exceptions.RequestException as e:
-        print(f"Erreur lors de la requête API: {e}")
-        exit(1)
+        raise RuntimeError(f"Erreur lors de la requête API Harvest: {e}") from e
 
 def load_period_entries_from_s3(s3_key, aws_config):
     """
@@ -225,6 +233,65 @@ def print_changes_summary(entries_list, label, max_display=MAX_CHANGES_ENTRIES_D
         if len(entries_list) > max_display:
             print(f"  ... et {len(entries_list) - max_display} autre(s) entrée(s) non affichée(s)")
 
+def identify_new_entries(existing_ids, new_entries_dict):
+    """
+    Identifie les nouvelles entrées (présentes dans new_entries mais pas dans existing).
+    
+    Args:
+        existing_ids: Set des IDs des entrées existantes
+        new_entries_dict: Dictionnaire des nouvelles entrées (ID -> entry)
+    
+    Returns:
+        list: Liste des nouvelles entrées
+    """
+    return [entry for entry_id, entry in new_entries_dict.items() 
+            if entry_id not in existing_ids]
+
+def identify_deleted_entries(existing_ids, new_entry_ids, existing_entries, start_date):
+    """
+    Identifie les entrées supprimées (présentes dans existing mais pas dans new_entries).
+    Filtre par spent_date >= start_date.
+    
+    Args:
+        existing_ids: Set des IDs des entrées existantes
+        new_entry_ids: Set des IDs des nouvelles entrées
+        existing_entries: Dictionnaire des entrées existantes (ID -> entry)
+        start_date: Date de début pour filtrer les suppressions
+    
+    Returns:
+        list: Liste des entrées supprimées
+    """
+    deleted = []
+    for entry_id in existing_ids - new_entry_ids:
+        entry = existing_entries[entry_id]
+        spent_date = entry.get('spent_date', '')
+        if spent_date and spent_date >= start_date:
+            deleted.append(entry)
+    return deleted
+
+def identify_updated_entries(existing_ids, new_entry_ids, existing_entries, new_entries_dict):
+    """
+    Identifie les entrées mises à jour (présentes dans les deux mais modifiées).
+    
+    Args:
+        existing_ids: Set des IDs des entrées existantes
+        new_entry_ids: Set des IDs des nouvelles entrées
+        existing_entries: Dictionnaire des entrées existantes (ID -> entry)
+        new_entries_dict: Dictionnaire des nouvelles entrées (ID -> entry)
+    
+    Returns:
+        list: Liste des entrées mises à jour
+    """
+    updated = []
+    for entry_id in existing_ids & new_entry_ids:
+        existing_entry = existing_entries[entry_id]
+        new_entry = new_entries_dict[entry_id]
+        
+        # Comparer les updated_at pour détecter les changements
+        if existing_entry.get('updated_at', '') != new_entry.get('updated_at', ''):
+            updated.append(new_entry)
+    return updated
+
 def save_changes_file(entries_list, change_type, date_str, time_str, is_local, aws_config, output_folder=None):
     """
     Sauvegarde une liste de changements sur disque et/ou S3.
@@ -283,32 +350,10 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     existing_ids = set(existing_entries.keys())
     new_entry_ids = set(new_entries_dict.keys())
     
-    # Identifier les nouvelles entrées (présentes dans new_entries mais pas dans existing)
-    new_entries_list = [entry for entry_id, entry in new_entries_dict.items() 
-                       if entry_id not in existing_ids]
-    
-    # Identifier les entrées supprimées (présentes dans existing mais pas dans new_entries)
-    # Filtrer par spent_date >= start_date
-    deleted_entries_list = []
-    for entry_id in existing_ids - new_entry_ids:
-        entry = existing_entries[entry_id]
-        spent_date = entry.get('spent_date', '')
-        if spent_date and spent_date >= start_date:
-            deleted_entries_list.append(entry)
-    
-    # Identifier les entrées mises à jour (présentes dans les deux mais modifiées)
-    updated_entries_list = []
-    for entry_id in existing_ids & new_entry_ids:
-        existing_entry = existing_entries[entry_id]
-        new_entry = new_entries_dict[entry_id]
-        
-        # Comparer les updated_at pour détecter les changements
-        existing_updated = existing_entry.get('updated_at', '')
-        new_updated = new_entry.get('updated_at', '')
-        
-        # Si updated_at a changé, c'est une mise à jour
-        if existing_updated != new_updated:
-            updated_entries_list.append(new_entry)
+    # Identifier les différents types de changements
+    new_entries_list = identify_new_entries(existing_ids, new_entries_dict)
+    deleted_entries_list = identify_deleted_entries(existing_ids, new_entry_ids, existing_entries, start_date)
+    updated_entries_list = identify_updated_entries(existing_ids, new_entry_ids, existing_entries, new_entries_dict)
     
     # Afficher les trois listes (seulement les N plus récentes)
     print("\n" + "="*60)
@@ -380,7 +425,7 @@ def merge_entries(existing_entries, new_entries, start_date):
     
     # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
     # Calculer start_date moins 2 jours pour la comparaison
-    start_date_minus_1 = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+    start_date_minus_1 = (datetime.strptime(start_date, DATE_FORMAT_DISPLAY) - timedelta(days=1)).strftime(DATE_FORMAT_DISPLAY)
     removed_old_ids = []
     for entry_id, entry in list(existing_entries.items()):
         spent_date = entry.get('spent_date', '')
@@ -531,8 +576,8 @@ def main():
     
     # Calculer la plage de dates (nombre de jours configurable)
     today = datetime.now()
-    from_date_display = (today - timedelta(days=days_back)).strftime('%Y-%m-%d')
-    to_date_display = today.strftime('%Y-%m-%d')
+    from_date_display = (today - timedelta(days=days_back)).strftime(DATE_FORMAT_DISPLAY)
+    to_date_display = today.strftime(DATE_FORMAT_DISPLAY)
     
     # Nom du fichier JSON (format YYYYMMDD)
     json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
