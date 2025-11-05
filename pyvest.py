@@ -154,6 +154,146 @@ def load_period_entries_from_s3(s3_key, aws_config):
     print(f"✓ {len(entries_dict)} entrées chargées depuis S3")
     return entries_dict
 
+def format_time_entry(entry):
+    """
+    Formate une time entry pour l'affichage en extrayant les champs spécifiés.
+    
+    Args:
+        entry: Dictionnaire représentant une time entry
+    
+    Returns:
+        str: Chaîne formatée avec les champs demandés
+    """
+    user_name = entry.get('user', {}).get('name', 'N/A') if entry.get('user') else 'N/A'
+    client_name = entry.get('client', {}).get('name', 'N/A') if entry.get('client') else 'N/A'
+    project_name = entry.get('project', {}).get('name', 'N/A') if entry.get('project') else 'N/A'
+    task_name = entry.get('task', {}).get('name', 'N/A') if entry.get('task') else 'N/A'
+    hours = entry.get('hours', 'N/A')
+    spent_date = entry.get('spent_date', 'N/A')
+    notes = entry.get('notes', '') or '(vide)'
+    
+    return (f"  User: {user_name}, Client: {client_name}, Project: {project_name}, "
+            f"Task: {task_name}, Hours: {hours}, Date: {spent_date}, Notes: {notes}")
+
+def identify_changes_and_save(existing_entries, new_entries, start_date, aws_config=None):
+    """
+    Identifie les nouvelles entrées, les entrées supprimées et les entrées mises à jour.
+    Affiche les trois listes et les sauvegarde dans des fichiers JSON sur disque et dans S3.
+    
+    Args:
+        existing_entries: Dictionnaire des entrées existantes (ID -> entry)
+        new_entries: Liste des nouvelles entrées depuis l'API
+        start_date: Date de début pour filtrer les suppressions
+        aws_config: Configuration AWS optionnelle pour sauvegarder dans S3
+    
+    Returns:
+        tuple: (new_entries_list, deleted_entries_list, updated_entries_list)
+    """
+    # Créer un dictionnaire des nouvelles entrées
+    new_entries_dict = {entry['id']: entry for entry in new_entries}
+    existing_ids = set(existing_entries.keys())
+    new_entry_ids = set(new_entries_dict.keys())
+    
+    # Identifier les nouvelles entrées (présentes dans new_entries mais pas dans existing)
+    new_entries_list = [entry for entry_id, entry in new_entries_dict.items() 
+                       if entry_id not in existing_ids]
+    
+    # Identifier les entrées supprimées (présentes dans existing mais pas dans new_entries)
+    # Filtrer par spent_date >= start_date
+    deleted_entries_list = []
+    for entry_id in existing_ids - new_entry_ids:
+        entry = existing_entries[entry_id]
+        spent_date = entry.get('spent_date', '')
+        if spent_date and spent_date >= start_date:
+            deleted_entries_list.append(entry)
+    
+    # Identifier les entrées mises à jour (présentes dans les deux mais modifiées)
+    updated_entries_list = []
+    for entry_id in existing_ids & new_entry_ids:
+        existing_entry = existing_entries[entry_id]
+        new_entry = new_entries_dict[entry_id]
+        
+        # Comparer les updated_at pour détecter les changements
+        existing_updated = existing_entry.get('updated_at', '')
+        new_updated = new_entry.get('updated_at', '')
+        
+        # Si updated_at a changé, c'est une mise à jour
+        if existing_updated != new_updated:
+            updated_entries_list.append(new_entry)
+    
+    # Afficher les trois listes
+    print("\n" + "="*60)
+    print("RÉSUMÉ DES CHANGEMENTS")
+    print("="*60)
+    print(f"Nouvelles entrées: {len(new_entries_list)}")
+    if new_entries_list:
+        for entry in new_entries_list:
+            print(format_time_entry(entry))
+    
+    print(f"\nEntrées supprimées: {len(deleted_entries_list)}")
+    if deleted_entries_list:
+        for entry in deleted_entries_list:
+            print(format_time_entry(entry))
+    
+    print(f"\nEntrées mises à jour: {len(updated_entries_list)}")
+    if updated_entries_list:
+        for entry in updated_entries_list:
+            print(format_time_entry(entry))
+    print("="*60 + "\n")
+    
+    # Générer le nom de fichier avec date et heure
+    now = datetime.now()
+    date_str = now.strftime('%Y%m%d')
+    time_str = now.strftime('%H%M%S')
+    
+    # Créer le dossier pour sauvegarder les fichiers
+    output_folder = "changes"
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Sauvegarder les nouvelles entrées
+    if new_entries_list:
+        new_filename = os.path.join(output_folder, f"{date_str}-new-{time_str}.json")
+        with open(new_filename, 'w', encoding='utf-8') as f:
+            json.dump(new_entries_list, f, indent=2, ensure_ascii=False)
+        print(f"✓ Fichier sauvegardé: {new_filename} ({len(new_entries_list)} entrées)")
+        
+        # Sauvegarder dans S3
+        if aws_config:
+            s3_key = f"changes/{date_str}-new-{time_str}.json"
+            if upload_to_s3(new_entries_list, s3_key, aws_config):
+                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
+    
+    # Sauvegarder les entrées supprimées
+    if deleted_entries_list:
+        deleted_filename = os.path.join(output_folder, f"{date_str}-deleted-{time_str}.json")
+        with open(deleted_filename, 'w', encoding='utf-8') as f:
+            json.dump(deleted_entries_list, f, indent=2, ensure_ascii=False)
+        print(f"✓ Fichier sauvegardé: {deleted_filename} ({len(deleted_entries_list)} entrées)")
+        
+        # Sauvegarder dans S3
+        if aws_config:
+            s3_key = f"changes/{date_str}-deleted-{time_str}.json"
+            if upload_to_s3(deleted_entries_list, s3_key, aws_config):
+                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
+    
+    # Sauvegarder les entrées mises à jour
+    if updated_entries_list:
+        updated_filename = os.path.join(output_folder, f"{date_str}-updated-{time_str}.json")
+        with open(updated_filename, 'w', encoding='utf-8') as f:
+            json.dump(updated_entries_list, f, indent=2, ensure_ascii=False)
+        print(f"✓ Fichier sauvegardé: {updated_filename} ({len(updated_entries_list)} entrées)")
+        
+        # Sauvegarder dans S3
+        if aws_config:
+            s3_key = f"changes/{date_str}-updated-{time_str}.json"
+            if upload_to_s3(updated_entries_list, s3_key, aws_config):
+                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
+    
+    if not new_entries_list and not deleted_entries_list and not updated_entries_list:
+        print("ℹ Aucun changement détecté, aucun fichier créé.")
+    
+    return new_entries_list, deleted_entries_list, updated_entries_list
+
 def merge_entries(existing_entries, new_entries, start_date):
     """
     Fusionne les nouvelles entrées avec les existantes.
@@ -346,6 +486,11 @@ def main():
     
     # Charger les entrées existantes depuis S3
     period_entries = load_period_entries_from_s3(s3_key, aws_config)
+    
+    # Identifier et sauvegarder les changements (nouvelles, supprimées, mises à jour)
+    new_entries_list, deleted_entries_list, updated_entries_list = identify_changes_and_save(
+        period_entries.copy(), time_entries, from_date_display, aws_config
+    )
     
     # Fusionner avec les nouvelles entrées (en passant la date de début pour la détection des suppressions)
     updated_period_entries = merge_entries(period_entries, time_entries, from_date_display)
