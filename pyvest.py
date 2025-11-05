@@ -190,6 +190,80 @@ def format_time_entry(entry):
     return (f"  User: {user_name}, Client: {client_name}, Project: {project_name}, "
             f"Task: {task_name}, Hours: {hours}, Date: {spent_date}, Notes: {notes}")
 
+def get_newest_entries(entries, limit=MAX_CHANGES_ENTRIES_DISPLAYED):
+    """
+    Trie les entrées par updated_at (décroissant) et retourne les limit premières.
+    
+    Args:
+        entries: Liste d'entrées à trier
+        limit: Nombre maximum d'entrées à retourner
+    
+    Returns:
+        list: Les limit entrées les plus récentes
+    """
+    sorted_entries = sorted(
+        entries,
+        key=lambda x: x.get('updated_at', '') or '',
+        reverse=True
+    )
+    return sorted_entries[:limit]
+
+def print_changes_summary(entries_list, label, max_display=MAX_CHANGES_ENTRIES_DISPLAYED):
+    """
+    Affiche un résumé des changements avec les N plus récentes entrées.
+    
+    Args:
+        entries_list: Liste des entrées à afficher
+        label: Libellé pour le type de changements
+        max_display: Nombre maximum d'entrées à afficher
+    """
+    print(f"{label}: {len(entries_list)}")
+    if entries_list:
+        newest = get_newest_entries(entries_list, max_display)
+        for entry in newest:
+            print(format_time_entry(entry))
+        if len(entries_list) > max_display:
+            print(f"  ... et {len(entries_list) - max_display} autre(s) entrée(s) non affichée(s)")
+
+def save_changes_file(entries_list, change_type, date_str, time_str, is_local, aws_config, output_folder=None):
+    """
+    Sauvegarde une liste de changements sur disque et/ou S3.
+    
+    Args:
+        entries_list: Liste des entrées à sauvegarder
+        change_type: Type de changement ('new', 'deleted', 'updated')
+        date_str: Date au format YYYYMMDD
+        time_str: Heure au format HHMMSS
+        is_local: True si on est en mode local (pas Lambda)
+        aws_config: Configuration AWS optionnelle
+        output_folder: Dossier local pour la sauvegarde (optionnel)
+    
+    Returns:
+        bool: True si la sauvegarde a réussi (au moins une), False sinon
+    """
+    if not entries_list:
+        return False
+    
+    filename = f"{date_str}{CHANGES_FILE_PATTERNS[change_type]}{time_str}.json"
+    success = False
+    
+    # Sauvegarde locale
+    if is_local and output_folder:
+        filepath = os.path.join(output_folder, filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(entries_list, f, indent=2, ensure_ascii=False)
+        print(f"✓ Fichier sauvegardé: {filepath} ({len(entries_list)} entrées)")
+        success = True
+    
+    # Sauvegarde S3
+    if aws_config:
+        s3_key = f"{S3_CHANGES_SUBFOLDER}/{filename}"
+        if upload_to_s3(entries_list, s3_key, aws_config):
+            print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
+            success = True
+    
+    return success
+
 def identify_changes_and_save(existing_entries, new_entries, start_date, aws_config=None):
     """
     Identifie les nouvelles entrées, les entrées supprimées et les entrées mises à jour.
@@ -236,45 +310,13 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
         if existing_updated != new_updated:
             updated_entries_list.append(new_entry)
     
-    # Fonction pour trier par updated_at (plus récent en premier) et prendre les N premiers
-    def get_newest_entries(entries, limit=MAX_CHANGES_ENTRIES_DISPLAYED):
-        """Trie les entrées par updated_at (décroissant) et retourne les limit premières."""
-        # Trier par updated_at en ordre décroissant (plus récent en premier)
-        # Les entrées sans updated_at sont placées en dernier
-        sorted_entries = sorted(
-            entries,
-            key=lambda x: x.get('updated_at', '') or '',
-            reverse=True
-        )
-        return sorted_entries[:limit]
-    
     # Afficher les trois listes (seulement les N plus récentes)
     print("\n" + "="*60)
     print("RÉSUMÉ DES CHANGEMENTS")
     print("="*60)
-    print(f"Nouvelles entrées: {len(new_entries_list)}")
-    if new_entries_list:
-        newest_new = get_newest_entries(new_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
-        for entry in newest_new:
-            print(format_time_entry(entry))
-        if len(new_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
-            print(f"  ... et {len(new_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
-    
-    print(f"\nEntrées supprimées: {len(deleted_entries_list)}")
-    if deleted_entries_list:
-        newest_deleted = get_newest_entries(deleted_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
-        for entry in newest_deleted:
-            print(format_time_entry(entry))
-        if len(deleted_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
-            print(f"  ... et {len(deleted_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
-    
-    print(f"\nEntrées mises à jour: {len(updated_entries_list)}")
-    if updated_entries_list:
-        newest_updated = get_newest_entries(updated_entries_list, MAX_CHANGES_ENTRIES_DISPLAYED)
-        for entry in newest_updated:
-            print(format_time_entry(entry))
-        if len(updated_entries_list) > MAX_CHANGES_ENTRIES_DISPLAYED:
-            print(f"  ... et {len(updated_entries_list) - MAX_CHANGES_ENTRIES_DISPLAYED} autre(s) entrée(s) non affichée(s)")
+    print_changes_summary(new_entries_list, "Nouvelles entrées")
+    print_changes_summary(deleted_entries_list, "\nEntrées supprimées")
+    print_changes_summary(updated_entries_list, "\nEntrées mises à jour")
     print("="*60 + "\n")
     
     # Générer le nom de fichier avec date et heure
@@ -286,54 +328,15 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     is_local = not os.getenv('AWS_LAMBDA_FUNCTION_NAME')
     
     # Créer le dossier pour sauvegarder les fichiers (seulement en local)
+    output_folder = None
     if is_local:
         output_folder = LOCAL_CHANGES_FOLDER
         os.makedirs(output_folder, exist_ok=True)
     
-    # Sauvegarder les nouvelles entrées
-    if new_entries_list:
-        # Sauvegarder sur disque seulement en local
-        if is_local:
-            new_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['new']}{time_str}.json")
-            with open(new_filename, 'w', encoding='utf-8') as f:
-                json.dump(new_entries_list, f, indent=2, ensure_ascii=False)
-            print(f"✓ Fichier sauvegardé: {new_filename} ({len(new_entries_list)} entrées)")
-        
-        # Sauvegarder dans S3
-        if aws_config:
-            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['new']}{time_str}.json"
-            if upload_to_s3(new_entries_list, s3_key, aws_config):
-                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
-    
-    # Sauvegarder les entrées supprimées
-    if deleted_entries_list:
-        # Sauvegarder sur disque seulement en local
-        if is_local:
-            deleted_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['deleted']}{time_str}.json")
-            with open(deleted_filename, 'w', encoding='utf-8') as f:
-                json.dump(deleted_entries_list, f, indent=2, ensure_ascii=False)
-            print(f"✓ Fichier sauvegardé: {deleted_filename} ({len(deleted_entries_list)} entrées)")
-        
-        # Sauvegarder dans S3
-        if aws_config:
-            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['deleted']}{time_str}.json"
-            if upload_to_s3(deleted_entries_list, s3_key, aws_config):
-                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
-    
-    # Sauvegarder les entrées mises à jour
-    if updated_entries_list:
-        # Sauvegarder sur disque seulement en local
-        if is_local:
-            updated_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['updated']}{time_str}.json")
-            with open(updated_filename, 'w', encoding='utf-8') as f:
-                json.dump(updated_entries_list, f, indent=2, ensure_ascii=False)
-            print(f"✓ Fichier sauvegardé: {updated_filename} ({len(updated_entries_list)} entrées)")
-        
-        # Sauvegarder dans S3
-        if aws_config:
-            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['updated']}{time_str}.json"
-            if upload_to_s3(updated_entries_list, s3_key, aws_config):
-                print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
+    # Sauvegarder les trois types de changements
+    save_changes_file(new_entries_list, 'new', date_str, time_str, is_local, aws_config, output_folder)
+    save_changes_file(deleted_entries_list, 'deleted', date_str, time_str, is_local, aws_config, output_folder)
+    save_changes_file(updated_entries_list, 'updated', date_str, time_str, is_local, aws_config, output_folder)
     
     if not new_entries_list and not deleted_entries_list and not updated_entries_list:
         print("ℹ Aucun changement détecté, aucun fichier créé.")
@@ -428,6 +431,28 @@ def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
     
     return success and success_latest
 
+def create_s3_client(aws_config):
+    """
+    Crée un client S3 selon l'environnement (Lambda ou local).
+    
+    Args:
+        aws_config: Configuration AWS avec region, access_key_id, secret_access_key
+    
+    Returns:
+        boto3.client: Client S3 configuré
+    """
+    if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+        # En Lambda, utiliser les credentials IAM du rôle (pas besoin d'access keys)
+        return boto3.client('s3', region_name=aws_config['region'])
+    else:
+        # Mode local: utiliser les credentials fournies dans config
+        return boto3.client(
+            's3',
+            aws_access_key_id=aws_config.get('access_key_id'),
+            aws_secret_access_key=aws_config.get('secret_access_key'),
+            region_name=aws_config['region']
+        )
+
 def download_from_s3(s3_key, aws_config):
     """
     Télécharge un fichier JSON depuis AWS S3.
@@ -435,17 +460,7 @@ def download_from_s3(s3_key, aws_config):
     """
     try:
         # Créer le client S3
-        # En Lambda, utiliser les credentials IAM du rôle (pas besoin d'access keys)
-        if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-            s3_client = boto3.client('s3', region_name=aws_config['region'])
-        else:
-            # Mode local: utiliser les credentials fournies dans config
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=aws_config.get('access_key_id'),
-                aws_secret_access_key=aws_config.get('secret_access_key'),
-                region_name=aws_config['region']
-            )
+        s3_client = create_s3_client(aws_config)
         
         # Télécharger le fichier depuis S3
         response = s3_client.get_object(Bucket=aws_config['bucket_name'], Key=s3_key)
@@ -475,17 +490,7 @@ def upload_to_s3(data, s3_key, aws_config):
     """
     try:
         # Créer le client S3
-        # En Lambda, utiliser les credentials IAM du rôle (pas besoin d'access keys)
-        if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-            s3_client = boto3.client('s3', region_name=aws_config['region'])
-        else:
-            # Mode local: utiliser les credentials fournies dans config
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=aws_config.get('access_key_id'),
-                aws_secret_access_key=aws_config.get('secret_access_key'),
-                region_name=aws_config['region']
-            )
+        s3_client = create_s3_client(aws_config)
         
         # Convertir les données en JSON
         json_data = json.dumps(data, indent=2, ensure_ascii=False)
