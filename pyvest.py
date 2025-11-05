@@ -6,6 +6,19 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+# Global constants for file paths and naming
+S3_HARVEST_DATA_FILE = "harvest-data.json"
+S3_DAILY_SUBFOLDER = "daily"
+S3_CHANGES_SUBFOLDER = "changes"
+LOCAL_CHANGES_FOLDER = "changes"
+DATE_FORMAT_FILENAME = '%Y%m%d'
+TIME_FORMAT_FILENAME = '%H%M%S'
+CHANGES_FILE_PATTERNS = {
+    'new': '-new-',
+    'deleted': '-deleted-',
+    'updated': '-updated-'
+}
+
 def load_config_from_env():
     """
     Charge la configuration depuis les variables d'environnement Lambda.
@@ -144,15 +157,15 @@ def load_period_entries_from_s3(s3_key, aws_config):
         return {}
     
     # Télécharger les données depuis S3 (depuis harvest-data.json)
-    entries = download_from_s3("harvest-data.json", aws_config)
+    entries = download_from_s3(S3_HARVEST_DATA_FILE, aws_config)
     
     if not entries:
-        print("✓ Aucune entrée chargée depuis S3 (fichier harvest-data.json vide ou inexistant)")
+        print(f"✓ Aucune entrée chargée depuis S3 (fichier {S3_HARVEST_DATA_FILE} vide ou inexistant)")
         return {}
     
     # Convertir la liste en dictionnaire avec l'ID comme clé
     entries_dict = {entry['id']: entry for entry in entries}
-    print(f"✓ {len(entries_dict)} entrées chargées depuis S3 (harvest-data.json)")
+    print(f"✓ {len(entries_dict)} entrées chargées depuis S3 ({S3_HARVEST_DATA_FILE})")
     return entries_dict
 
 def format_time_entry(entry):
@@ -244,29 +257,29 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     
     # Générer le nom de fichier avec date et heure
     now = datetime.now()
-    date_str = now.strftime('%Y%m%d')
-    time_str = now.strftime('%H%M%S')
+    date_str = now.strftime(DATE_FORMAT_FILENAME)
+    time_str = now.strftime(TIME_FORMAT_FILENAME)
     
     # Vérifier si on est en mode local (pas Lambda)
     is_local = not os.getenv('AWS_LAMBDA_FUNCTION_NAME')
     
     # Créer le dossier pour sauvegarder les fichiers (seulement en local)
     if is_local:
-        output_folder = "changes"
+        output_folder = LOCAL_CHANGES_FOLDER
         os.makedirs(output_folder, exist_ok=True)
     
     # Sauvegarder les nouvelles entrées
     if new_entries_list:
         # Sauvegarder sur disque seulement en local
         if is_local:
-            new_filename = os.path.join(output_folder, f"{date_str}-new-{time_str}.json")
+            new_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['new']}{time_str}.json")
             with open(new_filename, 'w', encoding='utf-8') as f:
                 json.dump(new_entries_list, f, indent=2, ensure_ascii=False)
             print(f"✓ Fichier sauvegardé: {new_filename} ({len(new_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
-            s3_key = f"changes/{date_str}-new-{time_str}.json"
+            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['new']}{time_str}.json"
             if upload_to_s3(new_entries_list, s3_key, aws_config):
                 print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
     
@@ -274,14 +287,14 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     if deleted_entries_list:
         # Sauvegarder sur disque seulement en local
         if is_local:
-            deleted_filename = os.path.join(output_folder, f"{date_str}-deleted-{time_str}.json")
+            deleted_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['deleted']}{time_str}.json")
             with open(deleted_filename, 'w', encoding='utf-8') as f:
                 json.dump(deleted_entries_list, f, indent=2, ensure_ascii=False)
             print(f"✓ Fichier sauvegardé: {deleted_filename} ({len(deleted_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
-            s3_key = f"changes/{date_str}-deleted-{time_str}.json"
+            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['deleted']}{time_str}.json"
             if upload_to_s3(deleted_entries_list, s3_key, aws_config):
                 print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
     
@@ -289,14 +302,14 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     if updated_entries_list:
         # Sauvegarder sur disque seulement en local
         if is_local:
-            updated_filename = os.path.join(output_folder, f"{date_str}-updated-{time_str}.json")
+            updated_filename = os.path.join(output_folder, f"{date_str}{CHANGES_FILE_PATTERNS['updated']}{time_str}.json")
             with open(updated_filename, 'w', encoding='utf-8') as f:
                 json.dump(updated_entries_list, f, indent=2, ensure_ascii=False)
             print(f"✓ Fichier sauvegardé: {updated_filename} ({len(updated_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
-            s3_key = f"changes/{date_str}-updated-{time_str}.json"
+            s3_key = f"{S3_CHANGES_SUBFOLDER}/{date_str}{CHANGES_FILE_PATTERNS['updated']}{time_str}.json"
             if upload_to_s3(updated_entries_list, s3_key, aws_config):
                 print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
     
@@ -383,10 +396,10 @@ def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
     success = upload_to_s3(entries_list, s3_key, aws_config)
     
     # Upload vers S3 avec le nom harvest-data.json
-    success_latest = upload_to_s3(entries_list, "harvest-data.json", aws_config)
+    success_latest = upload_to_s3(entries_list, S3_HARVEST_DATA_FILE, aws_config)
     
     if success and success_latest:
-        print(f"✓ {len(entries_list)} entrée(s) sauvegardée(s) vers S3 ({s3_key} et harvest-data.json)")
+        print(f"✓ {len(entries_list)} entrée(s) sauvegardée(s) vers S3 ({s3_key} et {S3_HARVEST_DATA_FILE})")
         print(f"✓ Sauvegarde terminée - {len(entries_list)} entrées confirmées en S3")
     
     return success and success_latest
@@ -493,7 +506,7 @@ def main():
     to_date_display = today.strftime('%Y-%m-%d')
     
     # Nom du fichier JSON (format YYYYMMDD)
-    json_filename = f"{today.strftime('%Y%m%d')}.json"
+    json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
     
     print(f"Récupération des entrées de temps du {from_date_display} au {to_date_display} ({days_back} derniers jours)...")
     
@@ -510,7 +523,7 @@ def main():
         }
     
     # Clé S3 pour le fichier (dans le sous-dossier daily)
-    s3_key = f"daily/{json_filename}"
+    s3_key = f"{S3_DAILY_SUBFOLDER}/{json_filename}"
     
     # Charger les entrées existantes depuis S3
     period_entries = load_period_entries_from_s3(s3_key, aws_config)
