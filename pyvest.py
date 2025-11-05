@@ -136,22 +136,23 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
 def load_period_entries_from_s3(s3_key, aws_config):
     """
     Charge les entrées existantes depuis S3.
+    Charge depuis harvest-data.json.
     Retourne un dictionnaire avec les IDs comme clés pour faciliter les mises à jour.
     """
     if not aws_config:
         print("Configuration AWS non trouvée, impossible de charger depuis S3.")
         return {}
     
-    # Télécharger les données depuis S3
-    entries = download_from_s3(s3_key, aws_config)
+    # Télécharger les données depuis S3 (depuis harvest-data.json)
+    entries = download_from_s3("harvest-data.json", aws_config)
     
     if not entries:
-        print("✓ Aucune entrée chargée depuis S3 (fichier vide ou inexistant)")
+        print("✓ Aucune entrée chargée depuis S3 (fichier harvest-data.json vide ou inexistant)")
         return {}
     
     # Convertir la liste en dictionnaire avec l'ID comme clé
     entries_dict = {entry['id']: entry for entry in entries}
-    print(f"✓ {len(entries_dict)} entrées chargées depuis S3")
+    print(f"✓ {len(entries_dict)} entrées chargées depuis S3 (harvest-data.json)")
     return entries_dict
 
 def format_time_entry(entry):
@@ -246,16 +247,22 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     date_str = now.strftime('%Y%m%d')
     time_str = now.strftime('%H%M%S')
     
-    # Créer le dossier pour sauvegarder les fichiers
-    output_folder = "changes"
-    os.makedirs(output_folder, exist_ok=True)
+    # Vérifier si on est en mode local (pas Lambda)
+    is_local = not os.getenv('AWS_LAMBDA_FUNCTION_NAME')
+    
+    # Créer le dossier pour sauvegarder les fichiers (seulement en local)
+    if is_local:
+        output_folder = "changes"
+        os.makedirs(output_folder, exist_ok=True)
     
     # Sauvegarder les nouvelles entrées
     if new_entries_list:
-        new_filename = os.path.join(output_folder, f"{date_str}-new-{time_str}.json")
-        with open(new_filename, 'w', encoding='utf-8') as f:
-            json.dump(new_entries_list, f, indent=2, ensure_ascii=False)
-        print(f"✓ Fichier sauvegardé: {new_filename} ({len(new_entries_list)} entrées)")
+        # Sauvegarder sur disque seulement en local
+        if is_local:
+            new_filename = os.path.join(output_folder, f"{date_str}-new-{time_str}.json")
+            with open(new_filename, 'w', encoding='utf-8') as f:
+                json.dump(new_entries_list, f, indent=2, ensure_ascii=False)
+            print(f"✓ Fichier sauvegardé: {new_filename} ({len(new_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
@@ -265,10 +272,12 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     
     # Sauvegarder les entrées supprimées
     if deleted_entries_list:
-        deleted_filename = os.path.join(output_folder, f"{date_str}-deleted-{time_str}.json")
-        with open(deleted_filename, 'w', encoding='utf-8') as f:
-            json.dump(deleted_entries_list, f, indent=2, ensure_ascii=False)
-        print(f"✓ Fichier sauvegardé: {deleted_filename} ({len(deleted_entries_list)} entrées)")
+        # Sauvegarder sur disque seulement en local
+        if is_local:
+            deleted_filename = os.path.join(output_folder, f"{date_str}-deleted-{time_str}.json")
+            with open(deleted_filename, 'w', encoding='utf-8') as f:
+                json.dump(deleted_entries_list, f, indent=2, ensure_ascii=False)
+            print(f"✓ Fichier sauvegardé: {deleted_filename} ({len(deleted_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
@@ -278,10 +287,12 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     
     # Sauvegarder les entrées mises à jour
     if updated_entries_list:
-        updated_filename = os.path.join(output_folder, f"{date_str}-updated-{time_str}.json")
-        with open(updated_filename, 'w', encoding='utf-8') as f:
-            json.dump(updated_entries_list, f, indent=2, ensure_ascii=False)
-        print(f"✓ Fichier sauvegardé: {updated_filename} ({len(updated_entries_list)} entrées)")
+        # Sauvegarder sur disque seulement en local
+        if is_local:
+            updated_filename = os.path.join(output_folder, f"{date_str}-updated-{time_str}.json")
+            with open(updated_filename, 'w', encoding='utf-8') as f:
+                json.dump(updated_entries_list, f, indent=2, ensure_ascii=False)
+            print(f"✓ Fichier sauvegardé: {updated_filename} ({len(updated_entries_list)} entrées)")
         
         # Sauvegarder dans S3
         if aws_config:
@@ -344,6 +355,7 @@ def merge_entries(existing_entries, new_entries, start_date):
 def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
     """
     Sauvegarde toutes les entrées vers S3.
+    Sauvegarde à la fois dans le fichier avec la date et dans harvest-data.json.
     """
     if not aws_config:
         print("Configuration AWS non trouvée, impossible de sauvegarder vers S3.")
@@ -354,14 +366,17 @@ def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
     # Convertir le dictionnaire en liste triée par date de dépense (spent_date)
     entries_list = sorted(entries_dict.values(), key=lambda x: x.get('spent_date', ''))
     
-    # Upload vers S3
+    # Upload vers S3 avec le nom de fichier basé sur la date
     success = upload_to_s3(entries_list, s3_key, aws_config)
     
-    if success:
-        print(f"✓ {len(entries_list)} entrée(s) sauvegardée(s) vers S3")
+    # Upload vers S3 avec le nom harvest-data.json
+    success_latest = upload_to_s3(entries_list, "harvest-data.json", aws_config)
+    
+    if success and success_latest:
+        print(f"✓ {len(entries_list)} entrée(s) sauvegardée(s) vers S3 ({s3_key} et harvest-data.json)")
         print(f"✓ Sauvegarde terminée - {len(entries_list)} entrées confirmées en S3")
     
-    return success
+    return success and success_latest
 
 def download_from_s3(s3_key, aws_config):
     """
