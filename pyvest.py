@@ -2,7 +2,6 @@ import requests
 import json
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
@@ -193,11 +192,17 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
             f"Erreur lors de la requête API Harvest (URL: {url}): {e}"
         ) from e
 
-def load_period_entries_from_s3(s3_key, aws_config):
+def load_period_entries_from_s3(aws_config):
     """
     Charge les entrées existantes depuis S3.
     Charge depuis harvest-data.json.
     Retourne un dictionnaire avec les IDs comme clés pour faciliter les mises à jour.
+    
+    Args:
+        aws_config: Configuration AWS pour accéder à S3
+    
+    Returns:
+        dict: Dictionnaire des entrées avec l'ID comme clé
     """
     if not aws_config:
         print("Configuration AWS non trouvée, impossible de charger depuis S3.")
@@ -229,6 +234,56 @@ def calculate_cutoff_date(start_date, days_offset=1):
     return (datetime.strptime(start_date, DATE_FORMAT_DISPLAY) - 
             timedelta(days=days_offset)).strftime(DATE_FORMAT_DISPLAY)
 
+def get_current_datetime_strings():
+    """
+    Retourne les chaînes de date et heure formatées pour les noms de fichiers.
+    
+    Returns:
+        tuple: (date_str, time_str) au format (YYYYMMDD, HHMMSS)
+    """
+    now = datetime.now()
+    return (
+        now.strftime(DATE_FORMAT_FILENAME),
+        now.strftime(TIME_FORMAT_FILENAME)
+    )
+
+def calculate_date_range(days_back):
+    """
+    Calcule la plage de dates pour la récupération des entrées.
+    
+    Args:
+        days_back: Nombre de jours en arrière à partir d'aujourd'hui
+    
+    Returns:
+        tuple: (from_date, to_date) au format YYYY-MM-DD
+    """
+    today = datetime.now()
+    from_date = (today - timedelta(days=days_back)).strftime(DATE_FORMAT_DISPLAY)
+    to_date = today.strftime(DATE_FORMAT_DISPLAY)
+    return from_date, to_date
+
+def safe_get_nested(data, *keys, default='N/A'):
+    """
+    Récupère une valeur imbriquée de manière sûre.
+    
+    Args:
+        data: Dictionnaire ou structure de données
+        *keys: Clés imbriquées à suivre (par exemple: 'user', 'name')
+        default: Valeur par défaut si la clé n'existe pas
+    
+    Returns:
+        La valeur trouvée ou la valeur par défaut
+    """
+    value = data
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+            if value is None:
+                return default
+        else:
+            return default
+    return value if value else default
+
 def format_time_entry(entry):
     """
     Formate une time entry pour l'affichage en extrayant les champs spécifiés.
@@ -239,10 +294,10 @@ def format_time_entry(entry):
     Returns:
         str: Chaîne formatée avec les champs demandés
     """
-    user_name = entry.get('user', {}).get('name', 'N/A') if entry.get('user') else 'N/A'
-    client_name = entry.get('client', {}).get('name', 'N/A') if entry.get('client') else 'N/A'
-    project_name = entry.get('project', {}).get('name', 'N/A') if entry.get('project') else 'N/A'
-    task_name = entry.get('task', {}).get('name', 'N/A') if entry.get('task') else 'N/A'
+    user_name = safe_get_nested(entry, 'user', 'name')
+    client_name = safe_get_nested(entry, 'client', 'name')
+    project_name = safe_get_nested(entry, 'project', 'name')
+    task_name = safe_get_nested(entry, 'task', 'name')
     hours = entry.get('hours', 'N/A')
     spent_date = entry.get('spent_date', 'N/A')
     notes = entry.get('notes', '') or '(vide)'
@@ -417,9 +472,7 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     print("="*60 + "\n")
     
     # Générer le nom de fichier avec date et heure
-    now = datetime.now()
-    date_str = now.strftime(DATE_FORMAT_FILENAME)
-    time_str = now.strftime(TIME_FORMAT_FILENAME)
+    date_str, time_str = get_current_datetime_strings()
     
     # Vérifier si on est en mode local (pas Lambda)
     is_local = not os.getenv('AWS_LAMBDA_FUNCTION_NAME')
@@ -462,18 +515,6 @@ def merge_entries(existing_entries, new_entries, start_date):
     # Identifier les entrées supprimées (présentes dans existing mais pas dans les nouvelles)
     new_entry_ids = set(new_entries_dict.keys())
     all_existing_ids = set(existing_entries.keys())
-    potentially_deleted_ids = all_existing_ids - new_entry_ids
-    
-    # Filtrer les suppressions : seulement les entrées avec spent_date >= date de début
-    deleted_ids = []
-    for entry_id in potentially_deleted_ids:
-        entry = existing_entries[entry_id]
-        spent_date = entry.get('spent_date', '')
-        
-        # Vérifier si l'entrée a une spent_date >= date de début
-        if spent_date and spent_date >= start_date:
-            deleted_ids.append(entry_id)
-            del existing_entries[entry_id]
     
     # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
     # Calculer start_date moins 1 jour pour la comparaison
@@ -481,7 +522,7 @@ def merge_entries(existing_entries, new_entries, start_date):
     removed_old_ids = []
     for entry_id, entry in list(existing_entries.items()):
         spent_date = entry.get('spent_date', '')
-        # Si la spent_date est vide ou plus ancienne que start_date - 2 jours, supprimer l'entrée
+        # Si la spent_date est vide ou plus ancienne que start_date - 1 jour, supprimer l'entrée
         if spent_date and spent_date < start_date_minus_1:
             removed_old_ids.append(entry_id)
             del existing_entries[entry_id]
@@ -491,11 +532,6 @@ def merge_entries(existing_entries, new_entries, start_date):
     print(f"✓ {new_record_count} nouveau(x) enregistrement(s) dans les nouvelles entrées")
     
     # print(f"✓ {len(new_entries)} nouvelle(s) entrée(s) traitée(s)")
-    if deleted_ids:
-        print(f"✓ {len(deleted_ids)} entrée(s) supprimée(s) (spent_date >= {start_date})")
-    else:
-        print(f"✓ Aucune entrée supprimée (toutes les entrées manquantes ont une spent_date < {start_date})")
-    
     if removed_old_ids:
         print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date_minus_1})")
     
@@ -627,11 +663,10 @@ def main():
     days_back = config['days_back']
     
     # Calculer la plage de dates (nombre de jours configurable)
-    today = datetime.now()
-    from_date_display = (today - timedelta(days=days_back)).strftime(DATE_FORMAT_DISPLAY)
-    to_date_display = today.strftime(DATE_FORMAT_DISPLAY)
+    from_date_display, to_date_display = calculate_date_range(days_back)
     
     # Nom du fichier JSON (format YYYYMMDD)
+    today = datetime.now()
     json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
     
     print(f"Récupération des entrées de temps du {from_date_display} au {to_date_display} ({days_back} derniers jours)...")
@@ -648,11 +683,8 @@ def main():
             'body': json.dumps({'error': 'Configuration AWS requise'})
         }
     
-    # Clé S3 pour le fichier (dans le sous-dossier daily)
-    s3_key = f"{S3_DAILY_SUBFOLDER}/{json_filename}"
-    
     # Charger les entrées existantes depuis S3
-    period_entries = load_period_entries_from_s3(s3_key, aws_config)
+    period_entries = load_period_entries_from_s3(aws_config)
     
     # Identifier et sauvegarder les changements (nouvelles, supprimées, mises à jour)
     new_entries_list, deleted_entries_list, updated_entries_list = identify_changes_and_save(
@@ -662,6 +694,9 @@ def main():
     # Fusionner avec les nouvelles entrées (en passant la date de début pour la détection des suppressions)
     updated_period_entries = merge_entries(period_entries, time_entries, from_date_display)
     
+    # Clé S3 pour le fichier (dans le sous-dossier daily)
+    s3_key = f"{S3_DAILY_SUBFOLDER}/{json_filename}"
+
     # Sauvegarder vers S3
     success = save_period_entries_to_s3(updated_period_entries, s3_key, aws_config)
     
