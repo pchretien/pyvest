@@ -42,7 +42,7 @@ DEFAULT_DAYS_BACK = 90
 # ============================================================================
 # Constants: Display settings
 # ============================================================================
-MAX_CHANGES_ENTRIES_DISPLAYED = 100
+MAX_CHANGES_ENTRIES_DISPLAYED = 10
 
 def load_config_from_env():
     """
@@ -120,11 +120,17 @@ def load_config_from_file(config_file='config.json'):
     except json.JSONDecodeError as e:
         raise ValueError(f"Le fichier {config_file} n'est pas un JSON valide: {e}") from e
 
-def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
+def get_time_entries(account_id, access_token, harvest_url, from_date, to_date, days_back=None):
     """
     Récupère toutes les entrées de temps depuis l'API Harvest pour une plage de dates donnée.
     Gère la pagination pour récupérer toutes les pages de résultats.
     """
+    # Afficher le message de récupération
+    if days_back:
+        print(f"Récupération des entrées de temps du {from_date} au {to_date} ({days_back} derniers jours)...")
+    else:
+        print(f"Récupération des entrées de temps du {from_date} au {to_date}...")
+    
     url = harvest_url
     all_entries = []
     page = 1
@@ -144,8 +150,6 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
     
     try:
         while True:
-            # print(f"Récupération de la page {page}...")
-            
             response = requests.get(url, headers=headers, params=params, timeout=30)
             response.raise_for_status()
             
@@ -163,7 +167,6 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
                 break
             
             all_entries.extend(time_entries)
-            # print(f"✓ {len(time_entries)} entrées récupérées de la page {page}")
             
             # Vérifier s'il y a une page suivante
             total_pages = data.get('total_pages', 1)
@@ -173,7 +176,7 @@ def get_time_entries(account_id, access_token, harvest_url, from_date, to_date):
             page += 1
             params['page'] = page
         
-        print(f"✓ Total: {len(all_entries)} entrées récupérées sur {page} page(s)")
+        print(f"Total: {len(all_entries)} entrées récupérées sur {page} page(s)")
         return all_entries
     
     except requests.exceptions.Timeout as e:
@@ -212,12 +215,12 @@ def load_period_entries_from_s3(aws_config):
     entries = download_from_s3(S3_HARVEST_DATA_FILE, aws_config)
     
     if not entries:
-        print(f"✓ Aucune entrée chargée depuis S3 (fichier {S3_HARVEST_DATA_FILE} vide ou inexistant)")
+        print(f"Aucune entrée chargée depuis S3 (fichier {S3_HARVEST_DATA_FILE} vide ou inexistant)")
         return {}
     
     # Convertir la liste en dictionnaire avec l'ID comme clé
     entries_dict = {entry['id']: entry for entry in entries}
-    print(f"✓ {len(entries_dict)} entrées chargées depuis S3 ({S3_HARVEST_DATA_FILE})")
+    print(f"{len(entries_dict)} entrées chargées depuis S3 ({S3_HARVEST_DATA_FILE})")
     return entries_dict
 
 def calculate_cutoff_date(start_date, days_offset=1):
@@ -463,8 +466,6 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     updated_entries_list = identify_updated_entries(existing_ids, new_entry_ids, existing_entries, new_entries_dict)
     
     # Afficher les trois listes (seulement les N plus récentes)
-    print("\n" + "="*60)
-    print("RÉSUMÉ DES CHANGEMENTS")
     print("="*60)
     print_changes_summary(new_entries_list, "Nouvelles entrées")
     print_changes_summary(deleted_entries_list, "\nEntrées supprimées")
@@ -489,7 +490,7 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
     save_changes_file(updated_entries_list, 'updated', date_str, time_str, is_local, aws_config, output_folder)
     
     if not new_entries_list and not deleted_entries_list and not updated_entries_list:
-        print("ℹ Aucun changement détecté, aucun fichier créé.")
+        print("Aucun changement détecté, aucun fichier créé.")
     
     return new_entries_list, deleted_entries_list, updated_entries_list
 
@@ -497,10 +498,9 @@ def merge_entries(existing_entries, new_entries, start_date):
     """
     Fusionne les nouvelles entrées avec les existantes.
     Gère les mises à jour et les suppressions.
-    Les suppressions ne sont détectées que pour les entrées avec spent_date >= date de début.
-    Supprime également les entrées avec spent_date < start_date pour éviter la croissance indéfinie.
+    Supprime les entrées avec spent_date < start_date - 1 jour pour éviter la croissance indéfinie.
     """
-    print(f"✓ Début du merge - {len(existing_entries)} entrées existantes, {len(new_entries)} nouvelles entrées")
+    print(f"Début du merge - {len(existing_entries)} entrées existantes, {len(new_entries)} nouvelles entrées")
     
     # Créer un dictionnaire des nouvelles entrées
     new_entries_dict = {entry['id']: entry for entry in new_entries}
@@ -516,6 +516,18 @@ def merge_entries(existing_entries, new_entries, start_date):
     new_entry_ids = set(new_entries_dict.keys())
     all_existing_ids = set(existing_entries.keys())
     
+    # Supprimer les entrées supprimées dans Harvest (présentes dans existing mais pas dans new_entries)
+    # Filtrer par spent_date >= start_date pour ne supprimer que les entrées récentes
+    deleted_ids = []
+    for entry_id in existing_ids_before_merge - new_entry_ids:
+        entry = existing_entries.get(entry_id)
+        if entry:
+            spent_date = entry.get('spent_date', '')
+            # Supprimer seulement si spent_date >= start_date (entrées récentes)
+            if spent_date and spent_date >= start_date:
+                deleted_ids.append(entry_id)
+                del existing_entries[entry_id]
+    
     # Supprimer les entrées avec spent_date < start_date pour éviter la croissance indéfinie
     # Calculer start_date moins 1 jour pour la comparaison
     start_date_minus_1 = calculate_cutoff_date(start_date, days_offset=1)
@@ -529,16 +541,17 @@ def merge_entries(existing_entries, new_entries, start_date):
     
     # Calculer et afficher le nombre d'enregistrements vraiment nouveaux
     new_record_count = len(new_entry_ids - existing_ids_before_merge)
-    print(f"✓ {new_record_count} nouveau(x) enregistrement(s) dans les nouvelles entrées")
     
-    # print(f"✓ {len(new_entries)} nouvelle(s) entrée(s) traitée(s)")
+    # Afficher les suppressions
+    if deleted_ids:
+        print(f"✓ {len(deleted_ids)} entrée(s) supprimée(s) dans Harvest (spent_date >= {start_date})")
     if removed_old_ids:
         print(f"✓ {len(removed_old_ids)} entrée(s) ancienne(s) supprimée(s) (spent_date < {start_date_minus_1})")
     
-    print(f"✓ Fin du merge - {len(existing_entries)} entrées après fusion")
+    print(f"Fin du merge - {len(existing_entries)} entrées après fusion")
     return existing_entries
 
-def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
+def save_period_entries_to_s3(entries_dict, aws_config):
     """
     Sauvegarde toutes les entrées vers S3.
     Sauvegarde à la fois dans le fichier avec la date et dans harvest-data.json.
@@ -547,10 +560,13 @@ def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
         print("Configuration AWS non trouvée, impossible de sauvegarder vers S3.")
         return False
     
-    print(f"✓ Sauvegarde de {len(entries_dict)} entrées vers S3")
-    
     # Convertir le dictionnaire en liste triée par date de dépense (spent_date)
     entries_list = sorted(entries_dict.values(), key=lambda x: x.get('spent_date', ''))
+    
+    # Construire la clé S3 pour le fichier quotidien (dans le sous-dossier daily)
+    today = datetime.now()
+    json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
+    s3_key = f"{S3_DAILY_SUBFOLDER}/{json_filename}"
     
     # Upload vers S3 avec le nom de fichier basé sur la date
     success = upload_to_s3(entries_list, s3_key, aws_config)
@@ -560,7 +576,6 @@ def save_period_entries_to_s3(entries_dict, s3_key, aws_config):
     
     if success and success_latest:
         print(f"✓ {len(entries_list)} entrée(s) sauvegardée(s) vers S3 ({s3_key} et {S3_HARVEST_DATA_FILE})")
-        print(f"✓ Sauvegarde terminée - {len(entries_list)} entrées confirmées en S3")
     
     return success and success_latest
 
@@ -600,7 +615,6 @@ def download_from_s3(s3_key, aws_config):
         content = response['Body'].read().decode('utf-8')
         data = json.loads(content)
         
-        print(f"✓ Fichier téléchargé depuis S3: s3://{aws_config['bucket_name']}/{s3_key}")
         return data
         
     except ClientError as e:
@@ -636,7 +650,6 @@ def upload_to_s3(data, s3_key, aws_config):
             ContentType='application/json'
         )
         
-        print(f"✓ Données uploadées vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
         return True
         
     except NoCredentialsError:
@@ -661,20 +674,6 @@ def main():
     access_token = config['access_token']
     harvest_url = config['harvest_url']
     days_back = config['days_back']
-    
-    # Calculer la plage de dates (nombre de jours configurable)
-    from_date_display, to_date_display = calculate_date_range(days_back)
-    
-    # Nom du fichier JSON (format YYYYMMDD)
-    today = datetime.now()
-    json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
-    
-    print(f"Récupération des entrées de temps du {from_date_display} au {to_date_display} ({days_back} derniers jours)...")
-    
-    # Récupérer les entrées de temps
-    time_entries = get_time_entries(account_id, access_token, harvest_url, from_date_display, to_date_display)
-    
-    # Configuration AWS requise
     aws_config = config.get('aws')
     if not aws_config:
         print("Configuration AWS requise pour le fonctionnement du script.")
@@ -683,22 +682,23 @@ def main():
             'body': json.dumps({'error': 'Configuration AWS requise'})
         }
     
+    # Calculer la plage de dates (nombre de jours configurable)
+    from_date_display, to_date_display = calculate_date_range(days_back)
+    
+    # Récupérer les entrées de temps
+    time_entries = get_time_entries(account_id, access_token, harvest_url, from_date_display, to_date_display, days_back)
+        
     # Charger les entrées existantes depuis S3
     period_entries = load_period_entries_from_s3(aws_config)
     
     # Identifier et sauvegarder les changements (nouvelles, supprimées, mises à jour)
-    new_entries_list, deleted_entries_list, updated_entries_list = identify_changes_and_save(
-        period_entries.copy(), time_entries, from_date_display, aws_config
-    )
+    identify_changes_and_save( period_entries.copy(), time_entries, from_date_display, aws_config )
     
     # Fusionner avec les nouvelles entrées (en passant la date de début pour la détection des suppressions)
     updated_period_entries = merge_entries(period_entries, time_entries, from_date_display)
-    
-    # Clé S3 pour le fichier (dans le sous-dossier daily)
-    s3_key = f"{S3_DAILY_SUBFOLDER}/{json_filename}"
 
     # Sauvegarder vers S3
-    success = save_period_entries_to_s3(updated_period_entries, s3_key, aws_config)
+    success = save_period_entries_to_s3(updated_period_entries, aws_config)
     
     # Résumé final
     summary = {
@@ -707,8 +707,8 @@ def main():
         'saved': len(updated_period_entries),
         'success': success
     }
-    print(f"✓ RÉSUMÉ FINAL - Chargées: {summary['loaded']}, Nouvelles: {summary['new']}, Sauvegardées: {summary['saved']}")
-    
+
+    # print(f"✓ RÉSUMÉ FINAL - Chargées: {summary['loaded']}, Nouvelles: {summary['new']}, Sauvegardées: {summary['saved']}")
     return summary
 
 def lambda_handler(event, context):
