@@ -673,7 +673,7 @@ def upload_to_s3(data, s3_key, aws_config):
         return False
 
 
-def main():
+def handle_no_event():
     """
     Fonction principale pour exécuter le script.
     Peut être appelée directement ou via le handler Lambda.

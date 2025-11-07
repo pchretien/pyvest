@@ -4,7 +4,7 @@ Importe toutes les fonctions depuis harvest_core.
 """
 
 import json
-from harvest_processor import main
+from harvest_processor import handle_no_event
 
 
 def lambda_handler(event, context):
@@ -40,7 +40,7 @@ def lambda_handler(event, context):
             }
         else:
             # Invocation normale (sans événement S3)
-            result = main()
+            result = handle_no_event()
             
             if isinstance(result, dict) and 'statusCode' in result:
                 return result
@@ -66,6 +66,6 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    result = main()
+    result = handle_no_event()
     if isinstance(result, dict) and 'statusCode' not in result:
         print(f"Résultat: {result}")
