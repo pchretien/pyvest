@@ -413,7 +413,7 @@ def save_changes_file(entries_list, change_type, date_str, time_str, is_local, a
         time_str: Heure au format HHMMSS
         is_local: True si on est en mode local (pas Lambda)
         aws_config: Configuration AWS optionnelle
-        output_folder: Dossier local pour la sauvegarde (optionnel)
+        output_folder: Dossier local de base pour la sauvegarde (optionnel)
     
     Returns:
         bool: True si la sauvegarde a réussi (au moins une), False sinon
@@ -424,9 +424,15 @@ def save_changes_file(entries_list, change_type, date_str, time_str, is_local, a
     filename = f"{date_str}{CHANGES_FILE_PATTERNS[change_type]}{time_str}.json"
     success = False
     
+    # Créer le sous-dossier basé sur le type de changement
+    change_subfolder = change_type  # 'new', 'deleted', ou 'updated'
+    
     # Sauvegarde locale
     if is_local and output_folder:
-        filepath = os.path.join(output_folder, filename)
+        # Créer le sous-dossier pour ce type de changement
+        subfolder_path = os.path.join(output_folder, change_subfolder)
+        os.makedirs(subfolder_path, exist_ok=True)
+        filepath = os.path.join(subfolder_path, filename)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(entries_list, f, indent=2, ensure_ascii=False)
         print(f"✓ Fichier sauvegardé: {filepath} ({len(entries_list)} entrées)")
@@ -434,7 +440,7 @@ def save_changes_file(entries_list, change_type, date_str, time_str, is_local, a
     
     # Sauvegarde S3
     if aws_config:
-        s3_key = f"{S3_CHANGES_SUBFOLDER}/{filename}"
+        s3_key = f"{S3_CHANGES_SUBFOLDER}/{change_subfolder}/{filename}"
         if upload_to_s3(entries_list, s3_key, aws_config):
             print(f"✓ Fichier uploadé vers S3: s3://{aws_config['bucket_name']}/{s3_key}")
             success = True
