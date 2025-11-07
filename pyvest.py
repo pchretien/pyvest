@@ -30,16 +30,12 @@ def lambda_handler(event, context):
             # Traiter l'événement S3
             handle_s3_event(s3_event_info)
             
-            # Pour l'instant, on exécute le traitement normal
-            # TODO: Implémenter la logique spécifique pour traiter le fichier S3 créé
-            result = main()
-            
+            # Retourner une réponse indiquant que l'événement S3 a été traité
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'message': 'S3 event processed successfully',
-                    's3_event': s3_event_info,
-                    'summary': result if isinstance(result, dict) and 'statusCode' not in result else {}
+                    's3_event': s3_event_info
                 })
             }
         else:
