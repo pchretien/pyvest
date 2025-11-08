@@ -14,40 +14,40 @@ pip install -r requirements.txt
 ### Run All Tests
 
 ```bash
-pytest test_pyvest.py -v
+python -m pytest test_pyvest.py -v
 ```
 
 ### Run Specific Test Classes
 
 ```bash
 # Test Lambda handler
-pytest test_pyvest.py::TestLambdaHandler -v
+python -m pytest test_pyvest.py::TestLambdaHandler -v
 
 # Test S3 event processing
-pytest test_pyvest.py::TestS3EventProcessing -v
+python -m pytest test_pyvest.py::TestS3EventProcessing -v
 
 # Test Harvest processor
-pytest test_pyvest.py::TestHarvestProcessor -v
+python -m pytest test_pyvest.py::TestHarvestProcessor -v
 
 # Test configuration loading
-pytest test_pyvest.py::TestConfigurationLoading -v
+python -m pytest test_pyvest.py::TestConfigurationLoading -v
 ```
 
 ### Run Specific Tests
 
 ```bash
 # Test handler without event
-pytest test_pyvest.py::TestLambdaHandler::test_lambda_handler_no_event -v
+python -m pytest test_pyvest.py::TestLambdaHandler::test_lambda_handler_no_event -v
 
 # Test handler with S3 event
-pytest test_pyvest.py::TestLambdaHandler::test_lambda_handler_with_s3_event -v
+python -m pytest test_pyvest.py::TestLambdaHandler::test_lambda_handler_with_s3_event -v
 ```
 
 ### Run Tests with Coverage
 
 ```bash
-pip install pytest-cov
-pytest test_pyvest.py --cov=harvest_processor --cov=pyvest --cov=s3_event_handler -v
+pip install python -m pytest-cov
+python -m pytest test_pyvest.py --cov=harvest_processor --cov=pyvest --cov=s3_event_handler -v
 ```
 
 ## Test Structure
@@ -93,6 +93,6 @@ All external dependencies are mocked:
 
 - Tests are designed to run locally without requiring actual AWS credentials or Harvest API access
 - All external API calls and S3 operations are mocked
-- Tests use pytest fixtures for reusable test data (mock_config, mock_time_entries, mock_context)
+- Tests use python -m pytest fixtures for reusable test data (mock_config, mock_time_entries, mock_context)
 - The tests verify both successful execution and error handling scenarios
 
