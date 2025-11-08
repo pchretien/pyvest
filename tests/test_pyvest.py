@@ -9,6 +9,10 @@ from unittest.mock import Mock, patch, MagicMock, mock_open
 from datetime import datetime, timedelta
 import os
 import sys
+from pathlib import Path
+
+# Add parent directory to path to import modules
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the modules to test
 from pyvest import lambda_handler
