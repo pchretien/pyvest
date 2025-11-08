@@ -12,13 +12,16 @@ import sys
 from pathlib import Path
 
 def main():
-    # Get the project root directory
-    project_root = Path(__file__).parent.absolute()
+    # Get the bin directory (where this script is located)
+    bin_dir = Path(__file__).parent.absolute()
+    # Get the project root directory (parent of bin)
+    project_root = bin_dir.parent.absolute()
     lambda_package_dir = project_root / "lambda-package"
-    zip_file = project_root / "pyvest-lambda.zip"
+    zip_file = bin_dir / "pyvest-lambda.zip"
     
     print("🚀 Creating Lambda deployment package...")
     print(f"   Project root: {project_root}")
+    print(f"   Bin directory: {bin_dir}")
     
     # Step 1: Create lambda-package directory
     print("\n1. Creating lambda-package directory...")
@@ -49,15 +52,18 @@ def main():
         print(f"   ✗ Error installing dependencies: {e}")
         sys.exit(1)
     
-    # Step 3: Copy pyvest.py
-    print("\n3. Copying pyvest.py...")
-    pyvest_file = project_root / "pyvest.py"
-    if not pyvest_file.exists():
-        print(f"   ✗ Error: {pyvest_file} not found!")
-        sys.exit(1)
+    # Step 3: Copy Python source files
+    print("\n3. Copying Python source files...")
+    source_files = ["pyvest.py", "harvest_processor.py", "s3_event_handler.py"]
     
-    shutil.copy2(pyvest_file, lambda_package_dir / "pyvest.py")
-    print(f"   ✓ Copied: {pyvest_file} -> {lambda_package_dir / 'pyvest.py'}")
+    for source_file in source_files:
+        source_path = project_root / source_file
+        if not source_path.exists():
+            print(f"   ✗ Error: {source_path} not found!")
+            sys.exit(1)
+        
+        shutil.copy2(source_path, lambda_package_dir / source_file)
+        print(f"   ✓ Copied: {source_file}")
     
     # Step 4: Create ZIP file
     print("\n4. Creating ZIP file...")
@@ -65,7 +71,7 @@ def main():
         zip_file.unlink()
         print(f"   Removed old ZIP file")
     
-    shutil.make_archive(str(project_root / "pyvest-lambda"), 'zip', lambda_package_dir)
+    shutil.make_archive(str(bin_dir / "pyvest-lambda"), 'zip', lambda_package_dir)
     zip_size = zip_file.stat().st_size / (1024 * 1024)  # Size in MB
     print(f"   ✓ Created: {zip_file} ({zip_size:.2f} MB)")
     
