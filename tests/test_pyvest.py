@@ -11,8 +11,10 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory and src directory to path to import modules
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root))
 
 # Import the modules to test
 from pyvest import lambda_handler

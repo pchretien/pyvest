@@ -52,12 +52,17 @@ def main():
         print(f"   ✗ Error installing dependencies: {e}")
         sys.exit(1)
     
-    # Step 3: Copy Python source files
-    print("\n3. Copying Python source files...")
+    # Step 3: Copy Python source files from src directory
+    print("\n3. Copying Python source files from src/...")
+    src_dir = project_root / "src"
     source_files = ["pyvest.py", "harvest_processor.py", "s3_event_handler.py"]
     
+    if not src_dir.exists():
+        print(f"   ✗ Error: {src_dir} directory not found!")
+        sys.exit(1)
+    
     for source_file in source_files:
-        source_path = project_root / source_file
+        source_path = src_dir / source_file
         if not source_path.exists():
             print(f"   ✗ Error: {source_path} not found!")
             sys.exit(1)

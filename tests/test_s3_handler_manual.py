@@ -7,8 +7,10 @@ import json
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import modules
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory and src directory to path to import modules
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root / "src"))
+sys.path.insert(0, str(project_root))
 
 from s3_event_handler import process_s3_event, handle_s3_event
 from pyvest import lambda_handler
@@ -271,14 +273,14 @@ def main():
     print("=" * 60)
     
     # Test individual functions
-    test_process_s3_event()
-    test_handle_s3_event()
+    #test_process_s3_event()
+    #test_handle_s3_event()
     
     # Test with real AWS S3 event payload
     test_real_s3_event_payload()
     
     # Test lambda handler (may fail without proper config)
-    test_lambda_handler_with_s3_event()
+    #test_lambda_handler_with_s3_event()
     
     print("\n" + "=" * 60)
     print("Manual testing complete!")

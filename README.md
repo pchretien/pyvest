@@ -101,14 +101,14 @@ Peut être exécuté localement ou déployé en tant qu'AWS Lambda.
 Exécutez simplement le script Python qui automatise tout le processus :
 
 ```bash
-python create-lambda-package.py
+python bin/create-lambda-package.py
 ```
 
 Le script va :
 - Créer le répertoire `lambda-package`
 - Installer les dépendances
-- Copier `pyvest.py`
-- Créer le fichier `pyvest-lambda.zip`
+- Copier les fichiers Python depuis `src/` (`pyvest.py`, `harvest_processor.py`, `s3_event_handler.py`)
+- Créer le fichier `bin/pyvest-lambda.zip`
 
 **Option B : Création manuelle**
 
@@ -125,9 +125,11 @@ pip install --no-user -r ../requirements.txt -t .
 
 **Note :** Le flag `--no-user` est nécessaire si pip a `--user` activé par défaut (erreur "Can not combine '--user' and '--target'").
 
-3. Copiez le fichier Python :
+3. Copiez les fichiers Python depuis `src/` :
 ```bash
-cp ../pyvest.py .
+cp ../src/pyvest.py .
+cp ../src/harvest_processor.py .
+cp ../src/s3_event_handler.py .
 ```
 
 4. Créez une archive ZIP :
@@ -314,7 +316,7 @@ pip install -r requirements.txt
 ### Exécution
 
 ```bash
-python pyvest.py
+python src/pyvest.py
 ```
 
 ---
@@ -336,7 +338,7 @@ Quand vous modifiez le code :
 
 **Option A : Utiliser le script (recommandé) :**
 ```bash
-python create-lambda-package.py
+python bin/create-lambda-package.py
 ```
 
 **Option B : Manuellement :**
@@ -344,8 +346,10 @@ python create-lambda-package.py
 cd lambda-package
 rm -rf * # Nettoyer (sauf .gitkeep si nécessaire)
 pip install --no-user -r ../requirements.txt -t .
-cp ../pyvest.py .
-python -c "import shutil; shutil.make_archive('../pyvest-lambda', 'zip', '.')"
+cp ../src/pyvest.py .
+cp ../src/harvest_processor.py .
+cp ../src/s3_event_handler.py .
+python -c "import shutil; shutil.make_archive('../bin/pyvest-lambda', 'zip', '.')"
 ```
 
 3. Dans AWS Console, allez dans Lambda > votre fonction `pyvest-harvest-export`
@@ -356,7 +360,7 @@ python -c "import shutil; shutil.make_archive('../pyvest-lambda', 'zip', '.')"
 
 **Ou utilisez AWS CLI :**
 ```bash
-aws lambda update-function-code --function-name pyvest-harvest-export --zip-file fileb://pyvest-lambda.zip
+aws lambda update-function-code --function-name pyvest-harvest-export --zip-file fileb://bin/pyvest-lambda.zip
 ```
 
 ---
