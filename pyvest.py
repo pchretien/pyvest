@@ -11,11 +11,21 @@ def lambda_handler(event, context):
     """
     Handler AWS Lambda.
     Peut être invoqué avec un événement S3 (ObjectCreated:Put) ou sans événement.
-    
+
+    Contextes d'invocation :
+      1. Événement S3 (ObjectCreated:Put) : déclenché automatiquement par AWS lorsqu'un
+         fichier de changements est déposé dans le bucket S3 (ex. changes/new/...,
+         changes/deleted/..., changes/updated/...). Dans ce cas, process_s3_event extrait
+         les informations du fichier déposé et handle_s3_event traite l'événement.
+      2. Invocation directe sans événement S3 : déclenché manuellement (console AWS, CLI,
+         test) ou sur planification (EventBridge/CloudWatch). Dans ce cas, handle_no_event
+         interroge l'API Harvest, détecte les changements par rapport aux données S3 et
+         met à jour harvest-data.json dans S3.
+
     Args:
         event: Event dict (peut être un événement S3 ou vide pour une invocation simple)
         context: Lambda context object
-    
+
     Returns:
         dict: Response avec statusCode et body
     """
@@ -65,6 +75,11 @@ def lambda_handler(event, context):
         }
 
 
+# Point d'entrée pour l'exécution locale (python pyvest.py).
+# Utilisé en développement ou pour tester le script hors de l'environnement Lambda.
+# La configuration est lue depuis config.json (au lieu des variables d'environnement Lambda).
+# Le comportement est identique à une invocation Lambda sans événement S3 :
+# interrogation de l'API Harvest, détection des changements et mise à jour de S3.
 if __name__ == "__main__":
     result = handle_no_event()
     if isinstance(result, dict) and 'statusCode' not in result:
