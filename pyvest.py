@@ -36,7 +36,7 @@ def lambda_handler(event, context):
         # Vérifier si c'est un événement S3
         s3_event_info = process_s3_event(event)
         
-        if s3_event_info:
+        if s3_event_info:  # Endpoint S3 : fichier déposé dans le bucket, traitement de l'événement ObjectCreated
             # Traiter l'événement S3
             handle_s3_event(s3_event_info)
             
@@ -48,7 +48,7 @@ def lambda_handler(event, context):
                     's3_event': s3_event_info
                 })
             }
-        else:
+        else:  # Endpoint direct : invocation manuelle, planifiée ou locale, interrogation de l'API Harvest
             # Invocation normale (sans événement S3)
             result = handle_no_event()
             
