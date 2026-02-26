@@ -1,36 +1,28 @@
-"""
-Module principal pour le handler Lambda et l'exécution locale.
-Importe toutes les fonctions depuis harvest_core.
-"""
+"""Lambda handler entry point and local execution runner."""
 
 import json
 from harvest_processor import handle_no_event
 
 
 def lambda_handler(event, context):
-    """
-    Handler AWS Lambda.
-    Peut être invoqué avec un événement S3 (ObjectCreated:Put) ou sans événement.
-    
+    """Handle an AWS Lambda invocation with either an S3 event or no event.
+
     Args:
-        event: Event dict (peut être un événement S3 ou vide pour une invocation simple)
-        context: Lambda context object
-    
+        event (dict): Lambda event payload — either an S3 ObjectCreated:Put
+            record or an empty dict for a direct invocation.
+        context (LambdaContext): Lambda runtime context object.
+
     Returns:
-        dict: Response avec statusCode et body
+        dict: Response with statusCode and JSON body.
     """
-    # Import ici pour éviter les imports circulaires
+    # Deferred import to avoid circular dependency at module load time
     from s3_event_handler import process_s3_event, handle_s3_event
-    
+
     try:
-        # Vérifier si c'est un événement S3
         s3_event_info = process_s3_event(event)
-        
+
         if s3_event_info:
-            # Traiter l'événement S3
             handle_s3_event(s3_event_info)
-            
-            # Retourner une réponse indiquant que l'événement S3 a été traité
             return {
                 'statusCode': 200,
                 'body': json.dumps({
@@ -39,12 +31,12 @@ def lambda_handler(event, context):
                 })
             }
         else:
-            # Invocation normale (sans événement S3)
+            # No S3 event: run the full Harvest data export pipeline
             result = handle_no_event()
-            
+
             if isinstance(result, dict) and 'statusCode' in result:
                 return result
-            
+
             return {
                 'statusCode': 200,
                 'body': json.dumps({

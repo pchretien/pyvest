@@ -1,46 +1,37 @@
-"""
-Module pour la gestion des événements S3.
-Contient la logique de traitement des événements S3 ObjectCreated:Put.
-"""
+"""Parsing and dispatch logic for S3 ObjectCreated:Put events."""
 
 
 def process_s3_event(event):
-    """
-    Traite un événement S3 ObjectCreated:Put.
-    
+    """Extract structured information from an S3 ObjectCreated:Put event payload.
+
     Args:
-        event: Event dict contenant les informations S3
-    
+        event (dict): Raw Lambda event dict that may or may not be an S3 event.
+
     Returns:
-        dict: Informations extraites (bucket, key, change_type, event_name, event_time) 
-              ou None si l'événement n'est pas valide
+        dict | None: Extracted fields (bucket, key, change_type, event_name,
+            event_time) if the event is a valid S3 ObjectCreated:Put, else None.
     """
     try:
-        # Vérifier si c'est un événement S3
         if 'Records' not in event or not event['Records']:
             return None
-        
+
         record = event['Records'][0]
-        
-        # Vérifier que c'est un événement S3
+
         if record.get('eventSource') != 'aws:s3':
             return None
-        
-        # Vérifier que c'est un événement ObjectCreated:Put
+
         if record.get('eventName') != 'ObjectCreated:Put':
             return None
-        
-        # Extraire les informations S3
+
         s3_info = record.get('s3', {})
         bucket_name = s3_info.get('bucket', {}).get('name')
         object_key = s3_info.get('object', {}).get('key')
-        
+
         if not bucket_name or not object_key:
             return None
-        
-        # Extraire le type de changement depuis le chemin ou le nom du fichier
+
+        # Infer change type from the S3 path first, then fall back to the filename
         change_type = None
-        # D'abord, essayer de détecter depuis le chemin (changes/new/, changes/deleted/, changes/updated/)
         if '/new/' in object_key:
             change_type = 'new'
         elif '/deleted/' in object_key:
@@ -48,15 +39,15 @@ def process_s3_event(event):
         elif '/updated/' in object_key:
             change_type = 'updated'
         else:
-            # Sinon, extraire depuis le nom du fichier (format: YYYYMMDD-new-HHMMSS.json)
-            filename = object_key.split('/')[-1]  # Prendre le dernier segment du chemin
+            # Filename format: YYYYMMDD-<change_type>-HHMMSS.json
+            filename = object_key.split('/')[-1]
             if '-new-' in filename:
                 change_type = 'new'
             elif '-deleted-' in filename:
                 change_type = 'deleted'
             elif '-updated-' in filename:
                 change_type = 'updated'
-        
+
         return {
             'bucket': bucket_name,
             'key': object_key,
@@ -70,26 +61,21 @@ def process_s3_event(event):
 
 
 def handle_s3_event(s3_event_info):
-    """
-    Gère un événement S3 après extraction des informations.
-    
+    """Handle a parsed S3 event by logging its details.
+
     Args:
-        s3_event_info: Dict contenant les informations de l'événement S3 (bucket, key, change_type, etc.)
-    
+        s3_event_info (dict | None): Structured event info as returned by
+            process_s3_event, or None.
+
     Returns:
-        dict: Résultat du traitement ou None si aucune action n'est nécessaire
+        dict | None: The same s3_event_info dict, or None if input was None.
     """
     if not s3_event_info:
         return None
-    
-    # Afficher les informations de l'événement
+
     print(f"Événement S3 détecté: {s3_event_info['event_name']}")
     print(f"Bucket: {s3_event_info['bucket']}, Key: {s3_event_info['key']}")
     if s3_event_info['change_type']:
         print(f"Type de changement: {s3_event_info['change_type']}")
-    
-    # TODO: Implémenter la logique spécifique pour traiter le fichier S3 créé
-    # Par exemple : télécharger le fichier, le traiter, etc.
-    
-    return s3_event_info
 
+    return s3_event_info
