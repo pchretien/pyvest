@@ -55,7 +55,15 @@ def main():
     # Step 3: Copy Python source files from src directory
     print("\n3. Copying Python source files from src/...")
     src_dir = project_root / "src"
-    source_files = ["pyvest.py", "harvest_processor.py", "s3_event_handler.py"]
+    source_files = [
+        "pyvest.py",
+        "harvest_processor.py",
+        "s3_event_handler.py",
+        "config.py",
+        "harvest_client.py",
+        "s3.py",
+        "changes.py",
+    ]
     
     if not src_dir.exists():
         print(f"   ✗ Error: {src_dir} directory not found!")

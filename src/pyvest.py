@@ -1,7 +1,8 @@
 """Lambda handler entry point and local execution runner."""
 
 import json
-from harvest_processor import handle_no_event
+from harvest_processor import run_harvest_pipeline
+from s3_event_handler import process_s3_event, handle_s3_event
 
 
 def lambda_handler(event, context):
@@ -15,9 +16,6 @@ def lambda_handler(event, context):
     Returns:
         dict: Response with statusCode and JSON body.
     """
-    # Deferred import to avoid circular dependency at module load time
-    from s3_event_handler import process_s3_event, handle_s3_event
-
     try:
         s3_event_info = process_s3_event(event)
 
@@ -32,16 +30,12 @@ def lambda_handler(event, context):
             }
         else:
             # No S3 event: run the full Harvest data export pipeline
-            result = handle_no_event()
-
-            if isinstance(result, dict) and 'statusCode' in result:
-                return result
-
+            summary = run_harvest_pipeline()
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'message': 'Harvest data export completed successfully',
-                    'summary': result if isinstance(result, dict) else {}
+                    'summary': summary
                 })
             }
     except ValueError as e:
@@ -50,7 +44,7 @@ def lambda_handler(event, context):
             'body': json.dumps({'error': str(e)})
         }
     except Exception as e:
-        print(f"Erreur lors de l'exécution: {str(e)}")
+        print(f"Error during execution: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
@@ -58,6 +52,5 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    result = handle_no_event()
-    if isinstance(result, dict) and 'statusCode' not in result:
-        print(f"Résultat: {result}")
+    result = run_harvest_pipeline()
+    print(f"Result: {result}")

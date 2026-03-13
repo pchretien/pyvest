@@ -14,13 +14,20 @@ Exports Harvest time entries and saves them to AWS S3. Runs locally or as an AWS
 ## Project Structure
 
 ```
-pyvest.py               # Lambda handler entry point + local runner
-harvest_processor.py    # Core logic: API fetch, merge, S3 read/write, change detection
-s3_event_handler.py     # Handles S3 ObjectCreated:Put events
-create-lambda-package.py # Builds the Lambda deployment ZIP
+src/
+  pyvest.py             # Lambda handler entry point + local runner
+  harvest_processor.py  # Pipeline orchestration
+  harvest_client.py     # Harvest API client
+  s3.py                 # S3 upload/download utilities
+  changes.py            # Diff, merge, format, and persist change sets
+  config.py             # Configuration loading (env vars or config.json)
+  s3_event_handler.py   # Handles S3 ObjectCreated:Put events
+bin/
+  create-lambda-package.py  # Builds the Lambda deployment ZIP
 config-sample.json      # Configuration template for local usage
 config.json             # Local configuration (not committed)
-requirements.txt        # Python dependencies
+requirements.txt        # Runtime dependencies
+requirements-dev.txt    # Development/test dependencies
 ```
 
 ## Local Usage
@@ -50,7 +57,7 @@ pip install -r requirements.txt
 
 3. Run:
 ```bash
-python pyvest.py
+python src/pyvest.py
 ```
 
 ## AWS Lambda Deployment
@@ -91,10 +98,10 @@ Create a Lambda execution role (`PyVestLambdaRole`) with:
 ### Step 3: Build the Deployment Package
 
 ```bash
-python create-lambda-package.py
+python bin/create-lambda-package.py
 ```
 
-This creates `pyvest-lambda.zip` containing the code and dependencies.
+This creates `bin/pyvest-lambda.zip` containing the code and dependencies.
 
 ### Step 4: Create the Lambda Function
 
@@ -145,8 +152,8 @@ changes/updated/YYYYMMDD-updated-HHMMSS.json
 ## Updating Lambda Code
 
 ```bash
-python create-lambda-package.py
-aws lambda update-function-code --function-name pyvest-harvest-export --zip-file fileb://pyvest-lambda.zip
+python bin/create-lambda-package.py
+aws lambda update-function-code --function-name pyvest-harvest-export --zip-file fileb://bin/pyvest-lambda.zip
 ```
 
 ## Monitoring
