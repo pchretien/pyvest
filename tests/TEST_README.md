@@ -1,6 +1,6 @@
-# Unit Tests for pyVest
+# Unit Tests for PyVest
 
-This directory contains unit tests for the pyVest Lambda handler and Harvest processor.
+This directory contains unit tests for the PyVest Lambda handler and Harvest processor.
 
 ## Running Tests
 
@@ -8,178 +8,111 @@ This directory contains unit tests for the pyVest Lambda handler and Harvest pro
 
 Install test dependencies:
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ### Run All Tests
 
 ```bash
-# From project root - pytest will automatically discover tests in the tests folder
-python -m pytest -v
-
-# Or explicitly specify the tests folder
-python -m pytest tests/ -v
-
-# Or specify the test file
-python -m pytest tests/test_pyvest.py -v
+python3 -m pytest tests/ -v
 ```
 
 ### Run Specific Test Classes
 
 ```bash
-# Test Lambda handler
-python -m pytest tests/test_pyvest.py::TestLambdaHandler -v
-
-# Test S3 event processing
-python -m pytest tests/test_pyvest.py::TestS3EventProcessing -v
-
-# Test Harvest processor
-python -m pytest tests/test_pyvest.py::TestHarvestProcessor -v
-
-# Test configuration loading
-python -m pytest tests/test_pyvest.py::TestConfigurationLoading -v
+python3 -m pytest tests/test_pyvest.py::TestLambdaHandler -v
+python3 -m pytest tests/test_pyvest.py::TestS3EventProcessing -v
+python3 -m pytest tests/test_pyvest.py::TestHarvestPipeline -v
+python3 -m pytest tests/test_pyvest.py::TestLocalFileIO -v
+python3 -m pytest tests/test_pyvest.py::TestLocalPipeline -v
+python3 -m pytest tests/test_pyvest.py::TestChangesOutputFolder -v
+python3 -m pytest tests/test_pyvest.py::TestConfigurationLoading -v
 ```
 
-### Run Specific Tests
+### Run with Coverage
 
 ```bash
-# Test handler without event
-python -m pytest tests/test_pyvest.py::TestLambdaHandler::test_lambda_handler_no_event -v
-
-# Test handler with S3 event
-python -m pytest tests/test_pyvest.py::TestLambdaHandler::test_lambda_handler_with_s3_event -v
-```
-
-### Run Tests with Coverage
-
-```bash
-pip install pytest-cov
-python -m pytest tests/test_pyvest.py --cov=harvest_processor --cov=pyvest --cov=s3_event_handler -v
+python3 -m pytest tests/test_pyvest.py --cov=src -v
 ```
 
 ## Test Structure
 
 ### TestLambdaHandler
-Tests for the `lambda_handler` function:
-- ✅ Handler without event (normal invocation)
-- ✅ Handler with S3 event
-- ✅ Handler with ValueError (missing config)
-- ✅ Handler with general exception
+Tests for the `lambda_handler` entry point:
+- ✅ Handler without event — runs full harvest pipeline via S3
+- ✅ Handler with S3 ObjectCreated:Put event — routes to handle_s3_event
+- ✅ ValueError (missing config) — returns 400
+- ✅ Unexpected exception — returns 500
 
 ### TestS3EventProcessing
-Tests for S3 event processing functions:
-- ✅ Valid S3 event processing
-- ✅ Detection of change types (new, deleted, updated)
-- ✅ Invalid event sources
-- ✅ Invalid event names
-- ✅ Missing or empty records
-- ✅ Filename-based change type detection
+Tests for S3 event parsing (`process_s3_event`, `handle_s3_event`):
+- ✅ Valid S3 event — returns parsed event info
+- ✅ Change type detection: deleted and updated (parametrized)
+- ✅ Invalid event source — returns None
+- ✅ Invalid event name — returns None
+- ✅ Missing or empty Records — returns None
+- ✅ Filename-based change type detection (fallback)
+- ✅ handle_s3_event with valid input — returns unchanged dict
+- ✅ handle_s3_event with None — returns None
 
-### TestHarvestProcessor
-Tests for the `handle_no_event` function:
-- ✅ Successful execution
-- ✅ Missing configuration
-- ✅ API errors
+### TestHarvestPipeline
+Tests for `run_harvest_pipeline()` (S3 / default mode):
+- ✅ Successful execution — returns correct summary dict
+- ✅ Missing config file — FileNotFoundError propagates
+- ✅ Harvest API error — RuntimeError propagates
+- ✅ Missing AWS config — raises ValueError
+
+### TestLocalFileIO
+Tests for local file I/O functions in `s3.py`:
+- ✅ `load_period_entries_from_local` — returns `{}` when file does not exist
+- ✅ `load_period_entries_from_local` — loads and keys entries by id
+- ✅ `save_period_entries_to_local` — creates `harvest_landing/` and `daily/` directories
+- ✅ `save_period_entries_to_local` — writes `harvest-data.json` and dated daily file
+- ✅ Round-trip: save then load preserves data integrity
+
+### TestLocalPipeline
+Tests for `run_harvest_pipeline(local=True)`:
+- ✅ Uses local load/save functions, returns correct summary
+- ✅ Never calls S3 load or save functions
+- ✅ Does not raise when AWS config is absent
+- ✅ Passes `harvest_landing/changes` as output_folder to identify_changes_and_save
+
+### TestChangesOutputFolder
+Tests for `identify_changes_and_save(..., output_folder=...)`:
+- ✅ New entries written to `{output_folder}/new/`
+- ✅ No S3 upload when aws_config is None
+- ✅ Change file contains the expected entries
 
 ### TestConfigurationLoading
-Tests for configuration loading:
-- ✅ Valid configuration file
-- ✅ Missing configuration file
-- ✅ Invalid JSON
-- ✅ Missing required fields
+Tests for `load_config_from_file()`:
+- ✅ Valid config file loads all fields correctly
+- ✅ Missing file — FileNotFoundError
+- ✅ Malformed JSON — ValueError
+- ✅ Missing required fields — ValueError
 
-## Mocking
+## Mocking Strategy
 
-All external dependencies are mocked:
-- **Harvest API calls** - Mocked using `@patch('harvest_processor.get_time_entries')`
-- **S3 operations** - Mocked using `@patch('harvest_processor.load_period_entries_from_s3')` and related functions
-- **File operations** - Mocked using `@patch('harvest_processor.load_config_from_file')`
-- **Environment variables** - Cleared using `@patch.dict(os.environ, {}, clear=True)`
+All external dependencies are mocked in unit tests:
+- **Harvest API** — `@patch('harvest_processor.get_time_entries')`
+- **S3 operations** — `@patch('harvest_processor.load_period_entries_from_s3')`, `save_period_entries_to_s3`
+- **Local I/O** — `@patch('harvest_processor.load_period_entries_from_local')`, `save_period_entries_to_local`
+- **Config loading** — `@patch('config.load_config_from_file')`
+- **Environment variables** — `@patch.dict(os.environ, {}, clear=True)`
+
+`TestLocalFileIO` and `TestChangesOutputFolder` use `tmp_path` (pytest built-in) to test actual file I/O against a temporary directory without mocking.
 
 ## Manual Testing
 
-### Testing S3 Handler Manually
-
-For interactive testing of the S3 handler, use the manual test script:
+For interactive testing of the S3 handler with a real AWS S3 event payload:
 
 ```bash
-# From project root
-python tests/test_s3_handler_manual.py
-
-# Or from the tests directory
-cd tests
-python test_s3_handler_manual.py
+python3 tests/test_s3_handler_manual.py
 ```
 
-This script demonstrates:
-- Testing `process_s3_event()` with various event types
-- Testing `handle_s3_event()` with different inputs
-- Testing `lambda_handler()` with S3 events
-- All change types (new, deleted, updated)
-- Path-based and filename-based detection
-- Invalid event handling
-
-### Testing with Sample S3 Events
-
-You can also test the S3 handler directly in Python:
-
-```python
-from s3_event_handler import process_s3_event, handle_s3_event
-
-# Create a sample S3 event
-event = {
-    'Records': [{
-        'eventSource': 'aws:s3',
-        'eventName': 'ObjectCreated:Put',
-        's3': {
-            'bucket': {'name': 'my-bucket'},
-            'object': {'key': 'changes/new/20240115-new-120000.json'}
-        },
-        'eventTime': '2024-01-15T12:00:00Z'
-    }]
-}
-
-# Process the event
-s3_info = process_s3_event(event)
-print(s3_info)
-
-# Handle the processed event
-result = handle_s3_event(s3_info)
-print(result)
-```
-
-### Testing Lambda Handler with S3 Events
-
-```python
-from pyvest import lambda_handler
-
-class MockContext:
-    def __init__(self):
-        self.function_name = "test-function"
-        self.aws_request_id = "test-request-id"
-
-# Test with S3 event
-s3_event = {
-    'Records': [{
-        'eventSource': 'aws:s3',
-        'eventName': 'ObjectCreated:Put',
-        's3': {
-            'bucket': {'name': 'my-bucket'},
-            'object': {'key': 'changes/new/file.json'}
-        }
-    }]
-}
-
-context = MockContext()
-response = lambda_handler(s3_event, context)
-print(response)
-```
+This script tests `process_s3_event()` and `handle_s3_event()` with a real AWS S3 event structure and does not require AWS credentials.
 
 ## Notes
 
-- Tests are designed to run locally without requiring actual AWS credentials or Harvest API access
-- All external API calls and S3 operations are mocked
-- Tests use python -m pytest fixtures for reusable test data (mock_config, mock_time_entries, mock_context)
-- The tests verify both successful execution and error handling scenarios
-- Manual testing scripts can be used for interactive debugging and validation
-
+- Tests run without AWS credentials or Harvest API access
+- `TestLocalFileIO` and `TestChangesOutputFolder` write to `tmp_path` — no cleanup needed
+- Running locally with `--local` flag uses `harvest_landing/` — see `src/pyvest.py`
