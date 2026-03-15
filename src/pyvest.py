@@ -55,6 +55,16 @@ def lambda_handler(event, context):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--local', action='store_true', help='Read and write from local harvest_landing/ instead of S3')
+    parser.add_argument('--history', action='store_true', help='Display change history instead of running the pipeline')
+    parser.add_argument('--hours', type=int, default=24, help='Number of hours to look back for history (default: 24)')
     args = parser.parse_args()
-    result = run_harvest_pipeline(local=args.local)
-    print(f"Result: {result}")
+
+    if args.history:
+        from config import load_config_from_env
+        from history import show_history
+        config = load_config_from_env()
+        aws_config = None if args.local else config.get('aws')
+        show_history(hours_back=args.hours, local=args.local, aws_config=aws_config)
+    else:
+        result = run_harvest_pipeline(local=args.local)
+        print(f"Result: {result}")
