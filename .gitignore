@@ -139,5 +139,6 @@ config.json
 *.zip
 lambda-package/
 changes/
+harvest_landing/
 
 .claude
