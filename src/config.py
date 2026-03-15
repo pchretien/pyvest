@@ -9,6 +9,7 @@ S3_DAILY_SUBFOLDER = "daily"
 S3_CHANGES_SUBFOLDER = "changes"
 
 # --- Local paths ---
+LOCAL_LANDING_FOLDER = "harvest_landing"
 LOCAL_CHANGES_FOLDER = "changes"
 
 # --- Date / time format strings ---

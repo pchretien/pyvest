@@ -7,7 +7,7 @@ from datetime import datetime
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from config import S3_HARVEST_DATA_FILE, S3_DAILY_SUBFOLDER, DATE_FORMAT_FILENAME
+from config import S3_HARVEST_DATA_FILE, S3_DAILY_SUBFOLDER, DATE_FORMAT_FILENAME, LOCAL_LANDING_FOLDER
 
 
 def create_s3_client(aws_config):
@@ -99,6 +99,56 @@ def upload_to_s3(data, s3_key, aws_config, s3_client=None):
     except Exception as e:
         print(f"Error uploading to S3: {e}")
         return False
+
+
+def load_period_entries_from_local(local_dir=LOCAL_LANDING_FOLDER):
+    """Load existing time entries from a local file (harvest-data.json) as an ID-keyed dict.
+
+    Args:
+        local_dir (str): Path to the local landing folder.
+
+    Returns:
+        dict: Mapping of entry ID to entry dict, or {} if the file does not exist.
+    """
+    filepath = os.path.join(local_dir, S3_HARVEST_DATA_FILE)
+    if not os.path.exists(filepath):
+        print(f"{filepath} does not exist, starting with empty dataset.")
+        return {}
+    with open(filepath, 'r', encoding='utf-8') as f:
+        entries = json.load(f)
+    entries_dict = {entry['id']: entry for entry in entries}
+    print(f"{len(entries_dict)} entries loaded from {filepath}")
+    return entries_dict
+
+
+def save_period_entries_to_local(entries_dict, local_dir=LOCAL_LANDING_FOLDER):
+    """Save all entries to the local landing folder as a dated daily file and harvest-data.json.
+
+    Args:
+        entries_dict (dict): ID-keyed entries to persist.
+        local_dir (str): Path to the local landing folder.
+
+    Returns:
+        bool: True on success.
+    """
+    os.makedirs(local_dir, exist_ok=True)
+    daily_dir = os.path.join(local_dir, S3_DAILY_SUBFOLDER)
+    os.makedirs(daily_dir, exist_ok=True)
+
+    entries_list = sorted(entries_dict.values(), key=lambda x: x.get('spent_date', ''))
+
+    today = datetime.now()
+    json_filename = f"{today.strftime(DATE_FORMAT_FILENAME)}.json"
+
+    daily_path = os.path.join(daily_dir, json_filename)
+    latest_path = os.path.join(local_dir, S3_HARVEST_DATA_FILE)
+
+    for path in (daily_path, latest_path):
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(entries_list, f, indent=2, ensure_ascii=False)
+
+    print(f"✓ {len(entries_list)} entry/entries saved locally ({daily_path} and {latest_path})")
+    return True
 
 
 def load_period_entries_from_s3(aws_config):

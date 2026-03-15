@@ -1,5 +1,6 @@
 """Lambda handler entry point and local execution runner."""
 
+import argparse
 import json
 from harvest_processor import run_harvest_pipeline
 from s3_event_handler import process_s3_event, handle_s3_event
@@ -52,5 +53,8 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    result = run_harvest_pipeline()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--local', action='store_true', help='Read and write from local harvest_landing/ instead of S3')
+    args = parser.parse_args()
+    result = run_harvest_pipeline(local=args.local)
     print(f"Result: {result}")

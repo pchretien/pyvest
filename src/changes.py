@@ -260,7 +260,7 @@ def compute_changes(existing_entries, new_entries, start_date):
     )
 
 
-def identify_changes_and_save(existing_entries, new_entries, start_date, aws_config=None):
+def identify_changes_and_save(existing_entries, new_entries, start_date, aws_config=None, output_folder=None):
     """Compute the diff between stored and fetched entries, then persist each change set.
 
     Args:
@@ -268,6 +268,7 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
         new_entries (list): Entries returned by the latest API fetch.
         start_date (str): Fetch window start date in YYYY-MM-DD format.
         aws_config (dict | None): AWS configuration for S3 uploads.
+        output_folder (str | None): Local folder for change files; uses LOCAL_CHANGES_FOLDER if None.
 
     Returns:
         tuple[list, list, list]: (new_entries_list, deleted_entries_list, updated_entries_list)
@@ -286,9 +287,9 @@ def identify_changes_and_save(existing_entries, new_entries, start_date, aws_con
 
     is_local = not os.getenv('AWS_LAMBDA_FUNCTION_NAME')
 
-    output_folder = None
-    if is_local:
+    if output_folder is None and is_local:
         output_folder = LOCAL_CHANGES_FOLDER
+    if output_folder:
         os.makedirs(output_folder, exist_ok=True)
 
     save_changes_file(new_entries_list, 'new', date_str, time_str, is_local, aws_config, output_folder)
